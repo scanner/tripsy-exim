@@ -15,12 +15,10 @@ dist/
 .coverage
 htmlcov/
 
-# Credentials and local configuration.  Nothing here should ever be
-# committed: the token from POST /auth is held in memory for the run, and
-# the 1Password item URL lives in the environment.
+# Environment and local data
 .env
 
-# Local trip archives.  Real trip data never belongs in the repository.
+# Local trip archives
 archive/
 *.ics
 !tests/fixtures/**/*.ics
