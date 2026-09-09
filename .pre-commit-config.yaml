@@ -9,6 +9,8 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=1200"]
       - id: check-yaml
+        # Drone pipelines are multi-document YAML.
+        args: ["--allow-multiple-documents"]
       - id: check-toml
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
