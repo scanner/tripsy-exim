@@ -1,0 +1,47 @@
+---
+kind: pipeline
+name: tripsy-exim Tests
+
+# Temp volume is an ephemeral per-run shared mount.  The lint step populates
+# the venv; the test step reuses it without re-running `uv sync`.
+#
+volumes:
+  - name: python-venv
+    temp: {}
+
+steps:
+  - name: lint
+    # NOTE: Keep this version in sync with requires-python in pyproject.toml
+    image: "python:3.14.7"
+    volumes:
+      - name: python-venv
+        path: /drone/src/.venv
+    environment:
+      PYTHONUNBUFFERED: 1
+      UV_LINK_MODE: copy
+    commands:
+      # Dev dependencies are a `[dependency-groups]` group, which `uv sync`
+      # installs by default -- no `--extra` needed.
+      #
+      - pip install uv
+      - uv sync --frozen
+      - uv run ruff check .
+      - uv run ruff format --check .
+      - uv run mypy .
+
+  - name: test
+    image: "python:3.14.7"
+    depends_on:
+      - lint
+    volumes:
+      - name: python-venv
+        path: /drone/src/.venv
+    environment:
+      PYTHONUNBUFFERED: 1
+      UV_LINK_MODE: copy
+    commands:
+      # `live` tests talk to the real Tripsy API and need credentials, so
+      # they never run in CI.
+      #
+      - pip install uv
+      - uv run pytest -v -m "not live"
