@@ -45,6 +45,7 @@ dev = [
     "factory-boy",
     "faker",
     "pytest",
+    "pytest-check",
     "pytest-cov",
     "pytest-factoryboy",
     "pytest-mock",

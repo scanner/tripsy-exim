@@ -4,6 +4,7 @@
 
 # 3rd party imports
 import pytest
+import pytest_check as check
 
 # Project imports
 from tripsy_exim.models import IDENTIFIER_PREFIX, is_minted, mint
@@ -17,13 +18,21 @@ class TestMint:
 
     ####################################################################
     #
-    def test_same_source_gives_the_same_identifier(self) -> None:
+    def test_minting_is_deterministic_and_well_formed(self) -> None:
         """
         GIVEN: one source record
-        WHEN:  an identifier is minted from it twice
-        THEN:  both are identical, so a re-import is a no-op
+        WHEN:  an identifier is minted from it
+        THEN:  it is reproducible, tagged as ours, and long enough for
+               trip-level duplicate suppression to engage
         """
-        assert mint("ics", "uid-1") == mint("ics", "uid-1")
+        identifier = mint("ics", "uid-1")
+
+        check.equal(identifier, mint("ics", "uid-1"), "reproducible")
+        check.greater(len(identifier), 5, "over the suppression threshold")
+        check.is_true(
+            identifier.startswith(f"{IDENTIFIER_PREFIX}-ics-"),
+            "prefixed and namespaced",
+        )
 
     ####################################################################
     #
@@ -50,20 +59,6 @@ class TestMint:
         THEN:  they differ, so neither suppresses the other's create
         """
         assert mint(*left) != mint(*right)
-
-    ####################################################################
-    #
-    def test_identifier_clears_the_five_character_threshold(self) -> None:
-        """
-        GIVEN: a minted identifier
-        WHEN:  its length is measured
-        THEN:  it is well over 5 characters, which trip-level duplicate
-               suppression requires
-        """
-        identifier = mint("ics", "uid-1")
-
-        assert len(identifier) > 5
-        assert identifier.startswith(f"{IDENTIFIER_PREFIX}-ics-")
 
     ####################################################################
     #
@@ -108,6 +103,6 @@ class TestIsMinted:
         """
         GIVEN: an identifier from us, from elsewhere, or missing
         WHEN:  it is tested
-        THEN:  only ours is recognised
+        THEN:  only ours is recognised, since the archive keys them apart
         """
         assert is_minted(identifier) is expected

@@ -4,56 +4,19 @@
 
 # system imports
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 # 3rd party imports
 import pytest
+import pytest_check as check
+from faker import Faker
 
 # Project imports
-from tripsy_exim.models import (
-    Activity,
-    Collaborator,
-    Expense,
-    Hosting,
-    Trip,
-    mint,
-)
+from tripsy_exim.models import Activity, Collaborator, Expense, Hosting, Trip
 from tripsy_exim.store import ARCHIVE_SCHEMA_VERSION, Archive, local_key
-
-# Synthetic throughout; nothing here corresponds to a real trip.
-#
-TRIP_PAYLOAD: dict[str, Any] = {
-    "id": 42,
-    "internal_identifier": mint("ics", "trip-uid-1"),
-    "name": "Example Trip",
-    "timezone": "Europe/Rome",
-    "starts_at": "2027-06-01",
-    "ends_at": "2027-06-15",
-    "has_dates": True,
-}
-
-HOSTING_PAYLOAD: dict[str, Any] = {
-    "id": 101,
-    "internal_identifier": mint("ics", "hosting-uid-1"),
-    "trip": 42,
-    "name": "Example Lodging",
-    "starts_at": "2027-06-01T14:00:00Z",
-    "ends_at": "2027-06-05T11:00:00Z",
-    "timezone": "Europe/Rome",
-    "price": 78.5,
-    "currency": "EUR",
-}
-
-
-####################################################################
-#
-@pytest.fixture
-def archive(tmp_path: Path) -> Archive:
-    """An empty archive rooted in a temporary directory."""
-    return Archive(tmp_path / "archive")
 
 
 ########################################################################
@@ -64,41 +27,46 @@ class TestLocalKey:
 
     ####################################################################
     #
-    def test_minted_identifier_wins_over_the_tripsy_id(self) -> None:
-        """
-        GIVEN: a trip we imported, carrying an identifier we minted
-        WHEN:  its archive key is derived
-        THEN:  the identifier is used, so the key survives a provider move
-        """
-        trip = Trip.model_validate(TRIP_PAYLOAD)
-
-        assert local_key(trip) == TRIP_PAYLOAD["internal_identifier"]
-
-    ####################################################################
-    #
     @pytest.mark.parametrize(
-        "payload,expected",
+        "override,expected",
         [
-            pytest.param({"id": 42}, "tripsy-42", id="no-identifier"),
             pytest.param(
-                {"id": 42, "internal_identifier": ""}, "tripsy-42", id="empty"
+                {},
+                lambda p: p["internal_identifier"],
+                id="minted-wins-over-id",
             ),
             pytest.param(
-                {"id": 42, "internal_identifier": "app-made-this"},
-                "tripsy-42",
+                {"internal_identifier": None},
+                lambda p: f"tripsy-{p['id']}",
+                id="no-identifier",
+            ),
+            pytest.param(
+                {"internal_identifier": ""},
+                lambda p: f"tripsy-{p['id']}",
+                id="empty-identifier",
+            ),
+            pytest.param(
+                {"internal_identifier": "app-made-this"},
+                lambda p: f"tripsy-{p['id']}",
                 id="foreign-identifier",
             ),
         ],
     )
-    def test_trips_we_did_not_mint_fall_back_to_the_tripsy_id(
-        self, payload: dict[str, Any], expected: str
+    def test_a_minted_identifier_is_preferred_over_the_tripsy_id(
+        self,
+        trip_payload: dict[str, Any],
+        override: dict[str, Any],
+        expected: Callable[[dict[str, Any]], str],
     ) -> None:
         """
-        GIVEN: a trip created in the Tripsy app rather than imported
+        GIVEN: a trip we imported, or one created in the Tripsy app
         WHEN:  its archive key is derived
-        THEN:  the Tripsy id is used
+        THEN:  an identifier we minted is used when there is one, since it
+               survives a move to another provider; otherwise the Tripsy id
         """
-        assert local_key(Trip.model_validate(payload)) == expected
+        payload = {**trip_payload, **override}
+
+        assert local_key(Trip.model_validate(payload)) == expected(payload)
 
     ####################################################################
     #
@@ -143,10 +111,12 @@ class TestLocalKey:
         key = local_key(hosting)
         path = archive.write(hosting, trip_key="t")
 
-        assert key not in (".", "..")
-        assert not key.startswith(".")
-        assert "/" not in key
-        assert archive.root.resolve() in path.resolve().parents
+        check.is_not_in(key, (".", ".."), "never a directory reference")
+        check.is_false(key.startswith("."), "never a hidden file")
+        check.is_not_in("/", key, "never a separator")
+        check.is_in(
+            archive.root.resolve(), path.resolve().parents, "stays inside"
+        )
 
 
 ########################################################################
@@ -157,42 +127,84 @@ class TestArchiveWrites:
 
     ####################################################################
     #
-    def test_a_trip_round_trips_unchanged(self, archive: Archive) -> None:
+    def test_a_trip_round_trips_and_its_file_is_self_describing(
+        self, archive: Archive, trip: Trip
+    ) -> None:
         """
         GIVEN: a canonical trip
         WHEN:  it is written to the archive and read back
-        THEN:  the model that comes back equals the one that went in
+        THEN:  the model is unchanged, and the file names its schema and
+               model so it can be understood on its own
         """
-        trip = Trip.model_validate(TRIP_PAYLOAD)
-
         path = archive.write(trip)
         restored = archive.read(Trip, path)
+        document = json.loads(path.read_text())
 
-        assert restored == trip
-        assert restored is not None
-        assert restored.model_fields_set == trip.model_fields_set
+        check.equal(restored, trip, "round trips unchanged")
+        check.equal(
+            restored.model_fields_set if restored else None,
+            trip.model_fields_set,
+            "set fields preserved",
+        )
+        check.equal(
+            document["schema_version"], ARCHIVE_SCHEMA_VERSION, "schema"
+        )
+        check.equal(document["kind"], "Trip", "model named")
+        check.equal(
+            archive.trip_keys(), [trip.internal_identifier], "discoverable"
+        )
 
     ####################################################################
     #
     @pytest.mark.parametrize(
-        "model,payload,collection",
+        "faker_locale,is_ascii",
         [
-            pytest.param(Hosting, HOSTING_PAYLOAD, "hostings", id="hosting"),
+            pytest.param("ja_JP", False, id="japanese"),
+            pytest.param("el_GR", False, id="greek"),
+            pytest.param("en_US", True, id="english"),
+        ],
+    )
+    def test_place_names_in_any_script_survive_the_archive(
+        self,
+        archive: Archive,
+        trip_factory: Callable[..., Trip],
+        faker: Faker,
+        faker_locale: str,
+        is_ascii: bool,
+    ) -> None:
+        """
+        GIVEN: a trip named in a script the archive never anticipated
+        WHEN:  it is written and read back
+        THEN:  the text is unchanged and stored as UTF-8 rather than
+               escaped, so an archive stays readable outside this tool
+        """
+        built = trip_factory(name=faker.city(), description=faker.paragraph())
+
+        path = archive.write(built)
+        restored = archive.read(Trip, path)
+        raw = path.read_text(encoding="utf-8")
+
+        check.equal(
+            str(built.name).isascii(),
+            is_ascii,
+            f"the {faker_locale} locale really applied",
+        )
+        check.equal(restored, built, "round trips unchanged")
+        check.is_in(str(built.name), raw, "written as UTF-8, not escaped")
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "model,payload_fixture,collection",
+        [
+            pytest.param(Hosting, "hosting_payload", "hostings", id="hosting"),
             pytest.param(
-                Activity,
-                {"id": 202, "name": "Example Activity", "price": 45.0},
-                "activities",
-                id="activity",
+                Activity, "activity_payload", "activities", id="activity"
             ),
-            pytest.param(
-                Expense,
-                {"id": 404, "title": "Example Expense", "price": 12.25},
-                "expenses",
-                id="expense",
-            ),
+            pytest.param(Expense, "expense_payload", "expenses", id="expense"),
             pytest.param(
                 Collaborator,
-                {"id": 2, "name": "Example Person", "joined": True},
+                "collaborator_payload",
                 "collaborators",
                 id="collaborator",
             ),
@@ -200,9 +212,10 @@ class TestArchiveWrites:
     )
     def test_child_objects_round_trip_under_their_trip(
         self,
+        request: pytest.FixtureRequest,
         archive: Archive,
         model: type[Any],
-        payload: dict[str, Any],
+        payload_fixture: str,
         collection: str,
     ) -> None:
         """
@@ -210,105 +223,107 @@ class TestArchiveWrites:
         WHEN:  it is written and read back
         THEN:  it lands under the trip in its own collection, unchanged
         """
-        obj = model.model_validate(payload)
+        obj = model.model_validate(request.getfixturevalue(payload_fixture))
 
         path = archive.write(obj, trip_key="trip-key")
 
-        assert path.parent.name == collection
-        assert path.parent.parent.name == "trip-key"
-        assert archive.read(model, path) == obj
+        check.equal(path.parent.name, collection, "collection directory")
+        check.equal(path.parent.parent.name, "trip-key", "under its trip")
+        check.equal(archive.read(model, path), obj, "round trips unchanged")
 
     ####################################################################
     #
     def test_price_survives_the_json_round_trip_as_a_decimal(
-        self, archive: Archive
+        self, archive: Archive, hosting: Hosting
     ) -> None:
         """
         GIVEN: a hosting whose price is a Decimal
         WHEN:  it is written as JSON and read back
-        THEN:  it is still an exact Decimal, not a float
+        THEN:  it is stored as a string and returns exact, not as a float
         """
-        hosting = Hosting.model_validate(HOSTING_PAYLOAD)
-
-        path = archive.write(hosting, trip_key="trip-key")
+        path = archive.write(hosting, trip_key="t")
         restored = archive.read(Hosting, path)
 
-        assert json.loads(path.read_text())["data"]["price"] == "78.5"
-        assert restored is not None
-        assert restored.price == Decimal("78.5")
+        check.equal(
+            json.loads(path.read_text())["data"]["price"],
+            "78.5",
+            "stored as a string",
+        )
+        check.equal(
+            restored.price if restored else None,
+            Decimal("78.5"),
+            "exact on the way back",
+        )
 
     ####################################################################
     #
     def test_a_partial_write_does_not_erase_stored_fields(
-        self, archive: Archive
+        self, archive: Archive, hosting: Hosting
     ) -> None:
         """
         GIVEN: a hosting already archived with a price
         WHEN:  a later export without expense permission omits price
         THEN:  the stored price survives and the new name is applied
         """
-        archive.write(Hosting.model_validate(HOSTING_PAYLOAD), trip_key="t")
+        archive.write(hosting, trip_key="t")
         partial = Hosting.model_validate(
             {
-                "id": 101,
-                "internal_identifier": HOSTING_PAYLOAD["internal_identifier"],
+                "id": hosting.id,
+                "internal_identifier": hosting.internal_identifier,
                 "name": "Renamed Lodging",
             }
         )
 
         path = archive.write(partial, trip_key="t")
         restored = archive.read(Hosting, path)
-
         assert restored is not None
-        assert restored.price == Decimal("78.5")
-        assert restored.currency == "EUR"
-        assert restored.name == "Renamed Lodging"
+
+        check.equal(restored.price, Decimal("78.5"), "price not erased")
+        check.equal(restored.currency, "EUR", "currency not erased")
+        check.equal(restored.name, "Renamed Lodging", "newer field applied")
 
     ####################################################################
     #
-    def test_undocumented_fields_survive_the_archive(
-        self, archive: Archive
+    def test_undocumented_and_source_fields_survive_the_archive(
+        self,
+        archive: Archive,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
-        GIVEN: a hosting carrying fields the docs do not list
+        GIVEN: a hosting carrying undocumented and source-only fields
         WHEN:  it is written and read back
-        THEN:  the fields are still there
+        THEN:  both are still there and still distinguishable
         """
         hosting = Hosting.model_validate(
-            {**HOSTING_PAYLOAD, "sort_order": 3, "custom_icon": "bed"}
+            hosting_payload_factory(sort_order=3, custom_icon="bed")
         ).with_source(tripit_segment_id="abc-123")
 
         path = archive.write(hosting, trip_key="t")
         restored = archive.read(Hosting, path)
-
         assert restored is not None
-        assert restored.wire_extras == {"sort_order": 3, "custom_icon": "bed"}
-        assert restored.source_extras == {"tripit_segment_id": "abc-123"}
+
+        check.equal(
+            restored.wire_extras,
+            {"sort_order": 3, "custom_icon": "bed"},
+            "undocumented Tripsy fields",
+        )
+        check.equal(
+            restored.source_extras,
+            {"tripit_segment_id": "abc-123"},
+            "source-only fields",
+        )
 
     ####################################################################
     #
-    def test_files_are_self_describing(self, archive: Archive) -> None:
-        """
-        GIVEN: any archived object
-        WHEN:  its file is inspected on its own
-        THEN:  it names its schema version and the model it holds
-        """
-        path = archive.write(Trip.model_validate(TRIP_PAYLOAD))
-
-        document = json.loads(path.read_text())
-
-        assert document["schema_version"] == ARCHIVE_SCHEMA_VERSION
-        assert document["kind"] == "Trip"
-
-    ####################################################################
-    #
-    def test_a_newer_schema_is_refused(self, archive: Archive) -> None:
+    def test_a_newer_schema_is_refused(
+        self, archive: Archive, trip: Trip
+    ) -> None:
         """
         GIVEN: a file written by a later version of this tool
         WHEN:  it is read
         THEN:  it is refused rather than silently misread
         """
-        path = archive.write(Trip.model_validate(TRIP_PAYLOAD))
+        path = archive.write(trip)
         document = json.loads(path.read_text())
         document["schema_version"] = ARCHIVE_SCHEMA_VERSION + 1
         path.write_text(json.dumps(document))
@@ -326,13 +341,15 @@ class TestArchiveWrites:
         WHEN:  an object that was never written is read
         THEN:  None comes back, so the first write has nothing to merge
         """
-        assert archive.read(Trip, archive.root / "trips/none/trip.json") is None
-        assert archive.trip_keys() == []
+        missing = archive.read(Trip, archive.root / "trips/none/trip.json")
+
+        check.is_none(missing, "absent object reads as None")
+        check.equal(archive.trip_keys(), [], "no trips listed")
 
     ####################################################################
     #
     def test_a_child_object_without_a_trip_key_is_refused(
-        self, archive: Archive
+        self, archive: Archive, hosting: Hosting
     ) -> None:
         """
         GIVEN: a hosting and no trip to put it under
@@ -340,7 +357,7 @@ class TestArchiveWrites:
         THEN:  a ValueError is raised rather than a stray file created
         """
         with pytest.raises(ValueError, match="trip_key"):
-            archive.write(Hosting.model_validate(HOSTING_PAYLOAD))
+            archive.write(hosting)
 
 
 ########################################################################
@@ -357,46 +374,33 @@ class TestManifest:
         """
         GIVEN: an archive that has never been exported to
         WHEN:  the manifest is read
-        THEN:  a usable empty manifest comes back
+        THEN:  a usable empty manifest comes back rather than an error
         """
         manifest = archive.read_manifest()
 
-        assert manifest["last_export_at"] is None
-        assert manifest["identifier_cache"] == {}
+        check.is_none(manifest["last_export_at"], "no watermark yet")
+        check.equal(manifest["identifier_cache"], {}, "empty cache")
 
     ####################################################################
     #
-    def test_the_watermark_is_the_run_start_time(
-        self, archive: Archive
-    ) -> None:
-        """
-        GIVEN: an export that began at a known time
-        WHEN:  the run is recorded
-        THEN:  the watermark is that time, in the format updatedSince takes
-        """
-        started = datetime(2027, 3, 17, 14, 30, tzinfo=UTC)
-
-        archive.record_export(started)
-
-        assert (
-            archive.read_manifest()["last_export_at"] == "2027-03-17T14:30:00Z"
-        )
-
-    ####################################################################
-    #
-    def test_the_identifier_cache_survives_a_watermark_update(
-        self, archive: Archive
+    def test_recording_a_run_advances_the_watermark_and_keeps_the_cache(
+        self, archive: Archive, trip: Trip
     ) -> None:
         """
         GIVEN: a manifest carrying a cached identifier mapping
-        WHEN:  a later run advances the watermark
-        THEN:  the cache is still there
+        WHEN:  a run that began at a known time is recorded
+        THEN:  the watermark is that time in the format updatedSince takes,
+               and the cache is left alone
         """
+        cache = {str(trip.internal_identifier): trip.id}
         manifest = archive.read_manifest()
-        manifest["identifier_cache"] = {"txim-ics-0123456789abcdef": 42}
+        manifest["identifier_cache"] = cache
         archive.write_manifest(manifest)
 
         archive.record_export(datetime(2027, 3, 17, 14, 30, tzinfo=UTC))
 
-        cache = archive.read_manifest()["identifier_cache"]
-        assert cache == {"txim-ics-0123456789abcdef": 42}
+        stored = archive.read_manifest()
+        check.equal(
+            stored["last_export_at"], "2027-03-17T14:30:00Z", "watermark"
+        )
+        check.equal(stored["identifier_cache"], cache, "cache kept")
