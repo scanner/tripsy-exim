@@ -18,3 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot erase data an earlier one captured.
 - Deterministic `internal_identifier` minting, so re-running an import
   updates rather than duplicates.
+- Survive changes to Tripsy's own payloads: a new field is kept, and a
+  payload that no longer parses is saved verbatim under `quarantine/`
+  instead of failing the run.  Undocumented fields seen during a run
+  are reported.

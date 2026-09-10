@@ -404,3 +404,137 @@ class TestManifest:
             stored["last_export_at"], "2027-03-17T14:30:00Z", "watermark"
         )
         check.equal(stored["identifier_cache"], cache, "cache kept")
+
+
+########################################################################
+########################################################################
+#
+class TestSchemaDrift:
+    """
+    Tests for surviving a change to Tripsy's own payload shape.
+
+    Three things can drift.  A new field is absorbed, a withdrawn field
+    leaves what was already captured alone, and a field whose type changed
+    defeats the model entirely -- only the last one needs the raw payload
+    kept for a later look.
+    """
+
+    ####################################################################
+    #
+    def test_a_new_field_is_absorbed_and_reported(
+        self,
+        archive: Archive,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
+    ) -> None:
+        """
+        GIVEN: a payload carrying a field Tripsy never used to send
+        WHEN:  it is ingested
+        THEN:  it archives normally, and the new field is reported rather
+               than only silently absorbed
+        """
+        payload = hosting_payload_factory(loyalty_tier="gold")
+
+        obj = archive.ingest(Hosting, payload, trip_key="t")
+
+        check.is_not_none(obj, "still parses")
+        check.equal(
+            archive.unknown_fields["Hosting"], {"loyalty_tier"}, "drift seen"
+        )
+        check.equal(archive.quarantined(), [], "nothing quarantined")
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "override,field",
+        [
+            pytest.param({"price": "78.50 EUR"}, "price", id="money-to-string"),
+            pytest.param({"id": "9f8e-7d6c"}, "id", id="int-id-to-uuid"),
+            pytest.param(
+                {"starts_at": "not a date"}, "starts_at", id="bad-date"
+            ),
+        ],
+    )
+    def test_a_changed_type_is_quarantined_not_lost(
+        self,
+        archive: Archive,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
+        override: dict[str, Any],
+        field: str,
+    ) -> None:
+        """
+        GIVEN: a payload whose field changed to a type the model refuses
+        WHEN:  it is ingested
+        THEN:  the run continues, and the payload is kept verbatim with
+               the reason, so it can be re-read once the model catches up
+        """
+        payload = hosting_payload_factory(**override)
+
+        obj = archive.ingest(Hosting, payload, trip_key="t")
+
+        assert obj is None, "the object cannot be parsed"
+        quarantined = archive.quarantined()
+        assert len(quarantined) == 1
+        document = json.loads(quarantined[0].read_text(encoding="utf-8"))
+
+        check.equal(document["payload"], payload, "kept byte for byte")
+        check.equal(document["kind"], "Hosting", "model named")
+        check.equal(document["trip_key"], "t", "owning trip recorded")
+        check.is_in(
+            field,
+            [error["field"] for error in document["errors"]],
+            "offending field named",
+        )
+
+    ####################################################################
+    #
+    def test_a_payload_with_nothing_to_key_on_is_quarantined(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a payload whose identifying fields have both gone
+        WHEN:  it is ingested
+        THEN:  it is quarantined rather than raising, since a renamed id
+               field is drift like any other
+        """
+        obj = archive.ingest(Hosting, {"name": "Example Lodging"}, trip_key="t")
+
+        check.is_none(obj, "cannot be keyed")
+        check.equal(len(archive.quarantined()), 1, "kept anyway")
+
+    ####################################################################
+    #
+    def test_a_withdrawn_field_leaves_the_archive_alone(
+        self,
+        archive: Archive,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
+    ) -> None:
+        """
+        GIVEN: a hosting archived with a price
+        WHEN:  a later payload no longer carries that field at all
+        THEN:  it still parses and the captured value is left in place
+        """
+        first = hosting_payload_factory()
+        archive.ingest(Hosting, first, trip_key="t")
+        without_price = {k: v for k, v in first.items() if k != "price"}
+
+        obj = archive.ingest(Hosting, without_price, trip_key="t")
+
+        assert obj is not None
+        stored = archive.read(Hosting, archive.path_for(obj, "t"))
+        check.equal(stored.price if stored else None, Decimal("78.5"), "kept")
+        check.equal(archive.quarantined(), [], "not a failure")
+
+    ####################################################################
+    #
+    def test_a_clean_run_reports_no_drift(
+        self, archive: Archive, hosting_payload: dict[str, Any]
+    ) -> None:
+        """
+        GIVEN: payloads matching the models exactly
+        WHEN:  they are ingested
+        THEN:  nothing is reported, so a report means something changed
+        """
+        archive.ingest(Hosting, hosting_payload, trip_key="t")
+
+        check.equal(dict(archive.unknown_fields), {}, "no drift")
+        check.equal(archive.quarantined(), [], "no quarantine")

@@ -21,17 +21,28 @@ Layout under the archive root:
 Keys come from `local_key`, and files are written whole through a
 temporary file and a rename, so an interrupted run leaves the previous
 version rather than a truncated one.
+
+A payload the models cannot parse is written verbatim under `quarantine/`
+instead, and the run continues.  Tripsy can change the type of a field it
+already returns, and pydantic rejects the whole object when it does -- one
+changed field would otherwise cost every other field on that object, and
+abort the export that was supposed to be protecting the data.
 """
 
 # system imports
 import json
 import os
 import re
+from collections import defaultdict
 from datetime import UTC, datetime
+from hashlib import blake2s
 from pathlib import Path
 from typing import Any, TypeVar
 
 # 3rd party imports
+from pydantic import ValidationError
+
+# Project imports
 from tripsy_exim.models.activity import Activity
 from tripsy_exim.models.base import CanonicalModel
 from tripsy_exim.models.collaborator import Collaborator
@@ -101,6 +112,33 @@ def local_key(obj: CanonicalModel) -> str:
 
 ####################################################################
 #
+def quarantine_key(payload: dict[str, Any]) -> str:
+    """
+    Derive a filename for a payload that could not be parsed.
+
+    `local_key` is unavailable here -- it needs a model, and the payload
+    failed to become one -- so the raw identifying fields are used, and a
+    digest of the content when the payload carries neither.
+
+    Args:
+        payload: The raw JSON object as received.
+
+    Returns:
+        A key safe to use as a file name.
+    """
+    for field in ("internal_identifier", "id"):
+        value = payload.get(field)
+        if value not in (None, ""):
+            return _sanitise(str(value))
+
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    return (
+        f"unidentified-{blake2s(canonical.encode(), digest_size=8).hexdigest()}"
+    )
+
+
+####################################################################
+#
 def _sanitise(value: str) -> str:
     """
     Reduce an identifier to one safe filename component.
@@ -129,6 +167,12 @@ class Archive:
             root: Directory holding the archive.  Created on first write.
         """
         self.root = Path(root)
+
+        # Undocumented fields seen this run, by model name.  Tripsy adds
+        # fields without announcing them, and the passthrough absorbs them
+        # silently; this is what makes that visible.
+        #
+        self.unknown_fields: dict[str, set[str]] = defaultdict(set)
 
     ####################################################################
     #
@@ -240,6 +284,116 @@ class Archive:
         }
         _write_json(path, document)
         return path
+
+    ####################################################################
+    #
+    def ingest(
+        self,
+        model: type[M],
+        payload: dict[str, Any],
+        trip_key: str | None = None,
+    ) -> M | None:
+        """
+        Archive one raw payload, quarantining it if it will not parse.
+
+        This is the call an export loop makes for every object it fetches.
+        A payload whose shape has drifted beyond what the models accept is
+        kept verbatim rather than dropped, so the data is still on disk to
+        re-read once the models catch up.
+
+        Args:
+            model: The canonical model the payload should become.
+            payload: The raw JSON object as received.
+            trip_key: Key of the owning trip, for child objects.
+
+        Returns:
+            The archived object, or None when it was quarantined.
+
+        Raises:
+            ValueError: If a child object is given without a trip key.
+        """
+        if model is not Trip and trip_key is None:
+            raise ValueError(
+                f"{model.__name__} is a child object and needs a trip_key"
+            )
+
+        try:
+            obj = model.model_validate(payload)
+            self.write(obj, trip_key)
+        except ValueError as error:
+            # Covers both ways a payload can defeat us: pydantic's
+            # ValidationError is a ValueError, and so is `local_key`
+            # failing on a payload that carries nothing to key on -- which
+            # is what a renamed id field looks like.
+            #
+            self.quarantine(model.__name__, payload, error, trip_key)
+            return None
+
+        # Only record a model that actually carried something unknown, so
+        # a non-empty report always means the payload changed.
+        #
+        if obj.wire_extras:
+            self.unknown_fields[model.__name__].update(obj.wire_extras)
+        return obj
+
+    ####################################################################
+    #
+    def quarantine(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        reason: Exception,
+        trip_key: str | None = None,
+    ) -> Path:
+        """
+        Store a payload the models could not accept, unchanged.
+
+        Args:
+            kind: Name of the model the payload was meant to become.
+            payload: The raw JSON object, written verbatim.
+            reason: The error that rejected it.
+            trip_key: Key of the owning trip, when one is known.
+
+        Returns:
+            The path written.
+        """
+        if isinstance(reason, ValidationError):
+            errors = [
+                {
+                    "field": ".".join(str(part) for part in error["loc"]),
+                    "message": error["msg"],
+                    "type": error["type"],
+                }
+                for error in reason.errors()
+            ]
+        else:
+            errors = [{"field": "", "message": str(reason), "type": "value"}]
+
+        document = {
+            "schema_version": ARCHIVE_SCHEMA_VERSION,
+            "kind": kind,
+            "trip_key": trip_key,
+            "quarantined_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "errors": errors,
+            "payload": payload,
+        }
+        path = (
+            self.root
+            / "quarantine"
+            / kind.lower()
+            / f"{quarantine_key(payload)}.json"
+        )
+        _write_json(path, document)
+        return path
+
+    ####################################################################
+    #
+    def quarantined(self) -> list[Path]:
+        """Every quarantined payload currently on disk, sorted."""
+        root = self.root / "quarantine"
+        if not root.is_dir():
+            return []
+        return sorted(root.glob("*/*.json"))
 
     ####################################################################
     #

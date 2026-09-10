@@ -8,6 +8,10 @@ Tripsy response can be partial -- `price` and `currency` are withheld
 without expense permission, and `fields=` responses are partial by
 construction.  A blind overwrite would let one restricted export erase data
 an earlier one captured.
+
+A payload that will not parse at all is kept verbatim under `quarantine/`
+rather than dropped, so a change to Tripsy's own schema costs a run its
+typed access to that object and nothing more.
 """
 
 # 3rd party imports
@@ -16,6 +20,7 @@ from tripsy_exim.store.archive import (
     COLLECTIONS,
     Archive,
     local_key,
+    quarantine_key,
 )
 
 __all__ = [
@@ -23,4 +28,5 @@ __all__ = [
     "COLLECTIONS",
     "Archive",
     "local_key",
+    "quarantine_key",
 ]
