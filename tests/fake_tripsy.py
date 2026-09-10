@@ -287,7 +287,13 @@ class FakeTripsy:
     def _find_trip_by_identifier(
         self, identifier: str
     ) -> dict[str, Any] | None:
-        """Locate a live trip by its internal_identifier."""
+        """
+        Locate a trip by its internal_identifier, deleted ones included.
+
+        Deleting a trip does not release its identifier: re-posting it
+        answers an empty 200 and creates nothing, so a deleted trip
+        blocks its own re-import.  Verified 2026-09-10.
+        """
         for trip in self._trips.values():
             if trip.get("internal_identifier") == identifier:
                 return trip
@@ -320,8 +326,13 @@ class FakeTripsy:
         """
         POST /v1/trip/{id}/{collection}.
 
-        A duplicate identifier within the same trip returns an empty 200,
-        with no length threshold -- that applies to trips only.
+        Suppression is scoped to one collection of one trip, and there is
+        no length threshold -- that applies to trips only.  The same
+        identifier creates freely in a different collection of the same
+        trip, and in the same collection of a different trip.  Verified
+        2026-09-10; an earlier note here claimed the whole trip was the
+        scope, which would have made a reclassified import silently do
+        nothing instead of leaving a copy behind in both collections.
         """
         if trip_id not in self._trips:
             return 404, {"detail": "Not found."}
@@ -377,8 +388,14 @@ class FakeTripsy:
     ####################################################################
     #
     def delete_trip(self, trip_id: int) -> tuple[int, Any]:
-        """DELETE /v1/trips/{id}.  Soft, so the tombstone survives."""
-        if trip_id not in self._trips:
+        """
+        DELETE /v1/trips/{id}.  Soft, so the tombstone survives.
+
+        A second delete answers 404 rather than another 204 -- the trip
+        is already gone as far as the API is concerned.  Verified
+        2026-09-10.
+        """
+        if trip_id not in self._trips or trip_id in self._deleted_trips:
             return 404, {"detail": "Not found."}
         self._deleted_trips.add(trip_id)
         self._trips[trip_id]["_updated_at"] = self.now

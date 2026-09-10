@@ -41,3 +41,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every parsed event comes with a note saying what was decided and why.
   Events that matched no rule become activities and are listed, so a
   misfiled event can be caught before an import writes it.
+- Report a duplicate create accurately: suppression covers one collection
+  of one trip, and a deleted trip keeps its identifier, so neither a
+  retyped object nor a deleted trip can be fixed by re-running an import.

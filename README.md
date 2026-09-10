@@ -83,6 +83,12 @@ Three design rules earn their place in the layout:
 - **Imports are idempotent.** Tripsy treats `internal_identifier` as an
   idempotency key, so parsers mint a deterministic identifier from the
   source record. Re-running an import is a no-op, not a pile of duplicates.
+
+  Two limits are worth knowing before a large import. Suppression is
+  scoped to one collection of one trip, so an object that changes *type*
+  between runs is created afresh alongside the original rather than moved.
+  And deleting a trip does not release its identifier -- a deleted trip
+  cannot be brought back by re-running the import that created it.
 - **Exports are incremental.** `updatedSince` reports trips changed
   directly *or* through their nested objects, so an unchanged trip is never
   fetched twice. Routine runs stay cheap; `--force` exists for repair.

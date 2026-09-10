@@ -33,11 +33,13 @@ answer.  They classify about a quarter of real events confidently and
 say so about the rest, which is the honest version of the same number.  A rule set with no long tail cannot be destabilised by adding to
 the tail.
 
-The classification an event gets is close to write-once.  Tripsy suppresses
-a duplicate `internal_identifier`, so re-importing a reclassified event
-does not move it -- it either leaves a copy in the old collection or
-silently does nothing.  That is why every event carries a note: the report
-is meant to be read before an import runs, not after.
+The classification an event gets is write-once in practice.  Tripsy scopes
+duplicate suppression to one collection of one trip -- verified 2026-09-10
+-- so re-importing an event that has been reclassified does not move it.
+It creates a second object in the new collection and leaves the first
+where it was, and no later run can tidy that up, because deleting a trip
+does not release its identifier either.  That is why every event carries a
+note: the report is meant to be read before an import runs, not after.
 """
 
 # system imports
