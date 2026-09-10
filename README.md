@@ -21,9 +21,9 @@ again, you move with your data.
 
 ## Status
 
-Early. The project layout, tooling, and API research are in place; the
-importers, the API client, and the exporter are not written yet. Nothing
-here talks to Tripsy today.
+Early. The project layout, tooling, API research, and the API client are
+in place; the importers and the exporter are not written yet. Nothing here
+talks to Tripsy today.
 
 See [CHANGELOG.md](CHANGELOG.md) for what has actually shipped.
 
@@ -78,7 +78,7 @@ writes them to Tripsy, the exporter rebuilds them from Tripsy, and the
 archive stores them. Tripsy-specific concerns stay inside `api/`, so
 supporting another service later is a new adapter rather than a rewrite.
 
-Two design rules earn their place in the layout:
+Three design rules earn their place in the layout:
 
 - **Imports are idempotent.** Tripsy treats `internal_identifier` as an
   idempotency key, so parsers mint a deterministic identifier from the
@@ -86,6 +86,48 @@ Two design rules earn their place in the layout:
 - **Exports are incremental.** `updatedSince` reports trips changed
   directly *or* through their nested objects, so an unchanged trip is never
   fetched twice. Routine runs stay cheap; `--force` exists for repair.
+- **Every call is paced.** Tripsy publishes no rate limit and sends no
+  rate-limit headers, so there is nothing to read and no way to find a
+  limit except by hitting it. The client sets its own pace from the one
+  signal the API does give -- how long it takes to answer -- and waits
+  roughly as long as the last response took before sending the next.
+  A fast API is still paced; a slowing one is backed away from, up to a
+  ceiling. Should a `Retry-After` ever arrive it takes precedence, raising
+  the floor for the rest of the run and decaying back as calls succeed.
+
+  Pacing lives in an `httpx` transport rather than in each route, so it
+  cannot be gone around, and the pace is shared across a whole run rather
+  than per-request. Three profiles match how this gets used:
+
+  | Profile | For | Gap per second of latency | Floor | Ceiling | Timeout |
+  |---|---|---|---|---|---|
+  | `import` | a bulk load of thousands of writes | 1.0x | 0.1s | 5s | 30s |
+  | `backup` | a scheduled or manual export | 2.0x | 0.5s | 10s | 60s |
+  | `interactive` | a few calls with someone waiting | 0.5x | 0.05s | 2s | 15s |
+
+  A request that never answers feeds back into all three of pacing,
+  retrying, and reporting, and it is worth being explicit about how:
+
+  - **As a latency sample.** A timeout reports the full timeout as its
+    elapsed time, so the pace rises to the ceiling on its own. Without
+    this a timeout storm would be the one case producing no slowdown at
+    all. A refused connection returns almost instantly instead, so it is
+    also treated as a reason to back off directly -- otherwise it would
+    look like the fastest response of the run and *raise* the pace.
+  - **As a retry.** A timeout is retried on the same terms as any other
+    failure, which matters because a timed-out write may well have
+    landed. That is safe for the same reason any create is retryable: the
+    minted `internal_identifier` makes the second attempt a no-op. A
+    create without one is not repeated after a timeout, any more than
+    after a `502`.
+  - **In the counters.** Timeouts count as failures and `429`/`503`
+    count as throttles, kept apart so a run can be reviewed afterwards:
+    "the service asked us to slow down" and "the service stopped
+    answering" call for different responses.
+
+  The timeout is also what bounds the worst latency sample the pacer can
+  ever see, so one hung connection cannot define the pace for a whole
+  run.
 
 ## Development
 

@@ -51,6 +51,7 @@ dev = [
     "pytest-factoryboy",
     "pytest-mock",
     "respx",
+    "time-machine",
     # Linting and formatting
     "mypy",
     "pre-commit",
