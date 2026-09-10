@@ -25,9 +25,11 @@ import httpx
 import pytest
 from faker import Faker
 from pytest_factoryboy import register
+from pytest_mock import MockerFixture
 
 # Project imports
 from tests import ics_builder
+from tests.clock import FakeClock
 from tests.factories import (
     ActivityPayloadFactory,
     CollaboratorPayloadFactory,
@@ -39,6 +41,7 @@ from tests.factories import (
     TripPayloadFactory,
 )
 from tests.fake_tripsy import BASE, FakeTripsy, transport
+from tripsy_exim.api import IMPORT, RetryPolicy, TripsyClient
 from tripsy_exim.store import Archive
 
 # Wire-shaped payloads, as the API returns them.
@@ -158,3 +161,88 @@ def ics_calendar(faker: Faker) -> Callable[..., str]:
         return ics_builder.to_ics(ics_builder.build_calendar(faker, **kwargs))
 
     return build
+
+
+####################################################################
+#
+@pytest.fixture
+def clock(mocker: MockerFixture) -> FakeClock:
+    """
+    Put a controllable clock under the pacer for one test.
+
+    `monotonic` and `sleep` are patched where `pacing` imported them, not
+    on the `time` module itself, so nothing outside that module is
+    affected -- patching `time.monotonic` globally would reach pytest and
+    httpx as well.  `mocker` undoes both when the test ends.
+
+    Any test that exercises pacing must ask for this fixture.  Without it
+    a pacer runs on the real clock and a test asserting a thirty-second
+    back-off would take thirty seconds.
+
+    Returns:
+        The clock now in force, which a test moves with `advance` and
+        reads through `slept`.
+    """
+    fake = FakeClock()
+    mocker.patch("tripsy_exim.api.pacing.monotonic", fake.monotonic)
+    mocker.patch("tripsy_exim.api.pacing.sleep", fake.sleep)
+    return fake
+
+
+####################################################################
+#
+def paced_store(clock: FakeClock, **kwargs: Any) -> FakeTripsy:
+    """A fake wired to the test clock, for tests that need their own."""
+    return FakeTripsy(clock=clock, **kwargs)
+
+
+####################################################################
+#
+@pytest.fixture
+def paced_tripsy(clock: FakeClock) -> FakeTripsy:
+    """A fake whose response latency is charged to the test clock."""
+    return paced_store(clock)
+
+
+####################################################################
+#
+def client_for(
+    store: FakeTripsy, clock: FakeClock, **kwargs: Any
+) -> TripsyClient:
+    """
+    Build a client onto a particular store.
+
+    The clock is not handed to the client -- it is already patched under
+    the pacer by the `clock` fixture.  It stays in the signature so that
+    a caller cannot build a paced client without having asked for the
+    fixture that makes one testable.
+
+    Jitter is pinned to zero so a back-off is one number a test can
+    assert rather than a range.
+
+    Args:
+        store: The fake to answer from.
+        clock: The patched clock, taken for the dependency rather than
+            for its value.
+        kwargs: Passed to `TripsyClient`, e.g. `profile` or `timeout`.
+
+    Returns:
+        A client that needs closing, or using as a context manager.
+    """
+    kwargs.setdefault("retries", RetryPolicy(jitter=0.0))
+    return TripsyClient(
+        token="token-for-tests",
+        transport=transport(store),
+        **kwargs,
+    )
+
+
+####################################################################
+#
+@pytest.fixture
+def api_client(
+    paced_tripsy: FakeTripsy, clock: FakeClock
+) -> Iterator[TripsyClient]:
+    """A client on the fake, paced by the import profile."""
+    with client_for(paced_tripsy, clock, profile=IMPORT) as client:
+        yield client

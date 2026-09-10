@@ -10,9 +10,23 @@ The store holds the semantics and the transport is a thin router onto it.
 That split matters because the API client does not exist yet: the store is
 drivable with raw httpx today and by the client later, unchanged.
 
-Time is explicit.  `now` is a plain attribute a test can move with
+Time is explicit, and there are two clocks that must not be conflated.
+`now` is the store's own clock, a plain attribute a test moves with
 `advance`, so `updatedSince` behaviour is deterministic instead of
-depending on how long the suite took to run.
+depending on how long the suite took to run.  `clock` is the separate
+monotonic clock the pacer reads: when one is attached, `latency` seconds
+are charged to it on every request, so a test can make the fake answer
+slowly without the suite running slowly.
+
+`throttle` queues canned responses -- a 429 with a `Retry-After`, say --
+which the transport serves before routing.  Unlike everything else here,
+this models no observed behaviour and is not a claim about what Tripsy
+does.  Probing found no rate-limit headers of any kind and no documented
+limit, so what the service sends when it has had enough is simply not
+known.  The client is built to read a directive and pace itself by one
+anyway, and these canned responses are how that is exercised.  If Tripsy
+turns out to send something else, or nothing, the client is no worse off
+-- it already paces on response latency alone.
 
 Five of the behaviours modelled here were verified against the live API on
 2026-09-09.  Hiding `price` and `currency` without expense permission was
@@ -24,11 +38,16 @@ fake is the only place that path is ever exercised.
 # system imports
 import json
 import re
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 # 3rd party imports
 import httpx
+
+# Project imports
+from tests.clock import FakeClock
 
 # Child collections, by the path segment the API uses for the list route.
 # The singular form is the detail route.
@@ -76,6 +95,8 @@ class FakeTripsy:
         can_see_expenses: bool = True,
         page_size: int = PAGE_SIZE,
         now: datetime | None = None,
+        clock: FakeClock | None = None,
+        latency: float = 0.0,
     ) -> None:
         """
         Args:
@@ -85,10 +106,25 @@ class FakeTripsy:
             page_size: Results per page on the paginated endpoints.
             now: The store's clock.  Defaults to a fixed instant so runs
                 are reproducible.
+            clock: The monotonic clock `latency` is charged to.  Attach
+                the one the pacer reads to make the fake appear slow.
+            latency: Seconds each request takes to answer.
         """
         self.can_see_expenses = can_see_expenses
         self.page_size = page_size
         self.now = now or datetime(2027, 1, 1, tzinfo=UTC)
+        self.clock = clock
+        self.latency = latency
+
+        # Canned responses served ahead of the real routing, oldest
+        # first, so a test reads as "the third call gets a 429".
+        #
+        self._canned: deque[tuple[int, Any, dict[str, str]]] = deque()
+
+        # Statuses replacing the response *after* the request has been
+        # carried out, oldest first.  See `lose_response`.
+        #
+        self._losses: deque[int] = deque()
 
         self.owner_id = 1
         self._next_id = 1
@@ -107,6 +143,59 @@ class FakeTripsy:
     def advance(self, **delta: float) -> None:
         """Move the clock, e.g. `advance(days=3)`."""
         self.now = self.now + timedelta(**delta)
+
+    ####################################################################
+    #
+    def throttle(
+        self,
+        *,
+        count: int = 1,
+        status: int = 429,
+        retry_after: float | str | None = None,
+        body: Any = None,
+    ) -> None:
+        """
+        Queue canned throttle responses ahead of the next real ones.
+
+        Speculative by construction: no throttle has been observed from
+        Tripsy, so the shapes here are the conventional ones rather than
+        measured ones.  A test using this asserts what the client does
+        when told to slow down, never what the service does.
+
+        Args:
+            count: How many consecutive requests are answered this way.
+            status: The status to answer with.
+            retry_after: Sent as a `Retry-After` header when given.  A
+                string is passed through untouched, so a test can send
+                an HTTP-date or a malformed value.
+            body: The response body, or None for an empty one.
+        """
+        headers: dict[str, str] = {}
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
+        for _ in range(count):
+            self._canned.append((status, body, dict(headers)))
+
+    ####################################################################
+    #
+    def lose_response(self, *, count: int = 1, status: int = 502) -> None:
+        """
+        Carry a request out and then lose the answer to it.
+
+        Distinct from `throttle`, and the distinction is the whole point.
+        A throttle is refused before anything happens, so repeating it is
+        trivially safe.  This one writes, and *then* fails -- the caller
+        cannot tell which, and repeating it is safe only because a
+        duplicate `internal_identifier` creates nothing.  Without this,
+        a suite can assert that retries happen but never that they are
+        harmless.
+
+        Args:
+            count: How many consecutive responses are lost.
+            status: The status the caller sees instead of the real one.
+        """
+        for _ in range(count):
+            self._losses.append(status)
 
     ####################################################################
     #
@@ -356,16 +445,34 @@ class FakeTripsy:
     ####################################################################
     #
     def _paginate(
-        self, results: list[Any], path: str, page: int
+        self,
+        results: list[Any],
+        path: str,
+        page: int,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Wrap results in the standard paginated envelope."""
+        """
+        Wrap results in the standard paginated envelope.
+
+        The page links carry the rest of the query forward, as DRF's
+        pagination does by building them from the whole request URL.  A
+        fake that emitted a bare `?page=` would let a client that follows
+        the link silently widen an `updatedSince` or `fields` filter on
+        page two, and the suite would not notice.
+        """
         start = (page - 1) * self.page_size
         window = results[start : start + self.page_size]
         has_next = start + self.page_size < len(results)
+
+        def link(number: int) -> str:
+            query = {k: v for k, v in (params or {}).items() if k != "page"}
+            query["page"] = str(number)
+            return f"{BASE}{path}?{urlencode(query)}"
+
         return {
             "count": len(results),
-            "next": f"{BASE}{path}?page={page + 1}" if has_next else None,
-            "previous": f"{BASE}{path}?page={page - 1}" if page > 1 else None,
+            "next": link(page + 1) if has_next else None,
+            "previous": link(page - 1) if page > 1 else None,
             "results": window,
         }
 
@@ -397,7 +504,7 @@ class FakeTripsy:
         if params.get("deleted") == "true":
             tombstones = [{"id": i} for i in sorted(self._deleted_trips)]
             return 200, self._paginate(
-                tombstones, "/v2/trips", int(params.get("page", 1))
+                tombstones, "/v2/trips", int(params.get("page", 1)), params
             )
 
         live = [
@@ -418,7 +525,7 @@ class FakeTripsy:
             for t in live
         ]
         return 200, self._paginate(
-            results, "/v2/trips", int(params.get("page", 1))
+            results, "/v2/trips", int(params.get("page", 1)), params
         )
 
     ####################################################################
@@ -467,6 +574,7 @@ class FakeTripsy:
                 tombstones,
                 f"/{version}/trip/{trip_id}/{collection}",
                 int(params.get("page", 1)),
+                params,
             )
 
         live = [
@@ -492,6 +600,7 @@ class FakeTripsy:
             results,
             f"/{version}/trip/{trip_id}/{collection}",
             int(params.get("page", 1)),
+            params,
         )
 
     ####################################################################
@@ -564,69 +673,118 @@ def transport(store: FakeTripsy) -> httpx.MockTransport:
         params = dict(request.url.params)
         store.requests.append((method, path))
 
+        # Charged before answering, so the caller measures the latency on
+        # the request that incurred it rather than the one after.
+        #
+        if store.clock is not None and store.latency:
+            store.clock.advance(store.latency)
+
+        # A queued throttle answers whatever the request was, which is
+        # what makes it a throttle rather than a routing rule.
+        #
+        if store._canned:
+            return _respond(*store._canned.popleft())
+
         body: dict[str, Any] = {}
         if request.content:
             body = json.loads(request.content)
 
-        if path == "/auth" and method == "POST":
-            return _respond(200, {"token": "fake-token-for-tests"})
+        # Losing the answer happens after the store has acted, so the
+        # write is real and only the reply is gone.
+        #
+        if store._losses:
+            status = store._losses.popleft()
+            _route(store, path, method, params, body)
+            return _respond(status, {"detail": "Lost."})
 
-        if path == "/v1/trips":
-            if method == "POST":
-                return _respond(*store.create_trip(body))
-            return _respond(*store.list_trips_v1(params))
-
-        if path == "/v2/trips" and method == "GET":
-            return _respond(*store.list_trips_v2(params))
-
-        match = _TRIP_DETAIL.match(path)
-        if match:
-            trip_id = int(match.group(1))
-            if method == "DELETE":
-                return _respond(*store.delete_trip(trip_id))
-            if method in ("PUT", "PATCH"):
-                return _respond(*store.update_trip(trip_id, body))
-            return _respond(*store.get_trip(trip_id, params))
-
-        match = _CHILD_LIST.match(path)
-        if match and match.group(3) in COLLECTIONS:
-            version, trip_id, collection = (
-                match.group(1),
-                int(match.group(2)),
-                match.group(3),
-            )
-            if method == "POST":
-                return _respond(*store.create_child(trip_id, collection, body))
-            return _respond(
-                *store.list_children(trip_id, collection, params, version)
-            )
-
-        match = _CHILD_DETAIL.match(path)
-        if match and match.group(3) in _SINGULAR_TO_PLURAL:
-            trip_id = int(match.group(2))
-            collection = _SINGULAR_TO_PLURAL[match.group(3)]
-            child_id = int(match.group(4))
-            if method == "DELETE":
-                return _respond(
-                    *store.delete_child(trip_id, collection, child_id)
-                )
-            if method in ("PUT", "PATCH"):
-                return _respond(
-                    *store.update_child(trip_id, collection, child_id, body)
-                )
-            return _respond(
-                *store.get_child(trip_id, collection, child_id, params)
-            )
-
-        return _respond(404, {"detail": "No such route in the fake."})
+        return _route(store, path, method, params, body)
 
     return httpx.MockTransport(handler)
 
 
 ####################################################################
 #
-def _respond(status: int, body: Any) -> httpx.Response:
+def _route(
+    store: FakeTripsy,
+    path: str,
+    method: str,
+    params: dict[str, str],
+    body: dict[str, Any],
+) -> httpx.Response:
+    """
+    Dispatch one request to the store method that answers it.
+
+    Split out from the handler so a request can be carried out and its
+    answer thrown away afterwards -- see `lose_response`.
+
+    Args:
+        store: The store holding the data and the semantics.
+        path: The URL path, already extracted.
+        method: The HTTP method, upper case.
+        params: Query parameters, flattened to strings.  Repeated keys
+            keep only the last value, which no route here depends on.
+        body: The decoded JSON body, or an empty dict when there was
+            none -- so a route may read it without checking first.
+
+    Returns:
+        The response, including a 404 for any path this fake does not
+        model.
+    """
+    if path == "/auth" and method == "POST":
+        return _respond(200, {"token": "fake-token-for-tests"})
+
+    if path == "/v1/trips":
+        if method == "POST":
+            return _respond(*store.create_trip(body))
+        return _respond(*store.list_trips_v1(params))
+
+    if path == "/v2/trips" and method == "GET":
+        return _respond(*store.list_trips_v2(params))
+
+    match = _TRIP_DETAIL.match(path)
+    if match:
+        trip_id = int(match.group(1))
+        if method == "DELETE":
+            return _respond(*store.delete_trip(trip_id))
+        if method in ("PUT", "PATCH"):
+            return _respond(*store.update_trip(trip_id, body))
+        return _respond(*store.get_trip(trip_id, params))
+
+    match = _CHILD_LIST.match(path)
+    if match and match.group(3) in COLLECTIONS:
+        version, trip_id, collection = (
+            match.group(1),
+            int(match.group(2)),
+            match.group(3),
+        )
+        if method == "POST":
+            return _respond(*store.create_child(trip_id, collection, body))
+        return _respond(
+            *store.list_children(trip_id, collection, params, version)
+        )
+
+    match = _CHILD_DETAIL.match(path)
+    if match and match.group(3) in _SINGULAR_TO_PLURAL:
+        trip_id = int(match.group(2))
+        collection = _SINGULAR_TO_PLURAL[match.group(3)]
+        child_id = int(match.group(4))
+        if method == "DELETE":
+            return _respond(*store.delete_child(trip_id, collection, child_id))
+        if method in ("PUT", "PATCH"):
+            return _respond(
+                *store.update_child(trip_id, collection, child_id, body)
+            )
+        return _respond(*store.get_child(trip_id, collection, child_id, params))
+
+    return _respond(404, {"detail": "No such route in the fake."})
+
+
+####################################################################
+#
+def _respond(
+    status: int, body: Any, headers: dict[str, str] | None = None
+) -> httpx.Response:
     """Build a response, with an empty body when there is none to send."""
     if body is None:
-        return httpx.Response(status)
-    return httpx.Response(status, json=body)
+        return httpx.Response(status, headers=headers)
+    return httpx.Response(status, json=body, headers=headers)
