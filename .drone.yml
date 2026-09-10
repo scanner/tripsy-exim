@@ -54,6 +54,12 @@ depends_on:
   - tripsy-exim Tests
 
 trigger:
+  # Belt and braces: pull request builds are also switched off in Drone's
+  # own settings.  This keeps PRs green if that switch is ever back on.
+  #
+  event:
+    exclude:
+      - pull_request
   status:
     - success
     - failure
