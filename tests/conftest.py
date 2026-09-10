@@ -15,14 +15,19 @@ including fields the factory does not declare.
 
 # system imports
 import os
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 # 3rd party imports
 import factory.random
+import httpx
 import pytest
+from faker import Faker
 from pytest_factoryboy import register
 
 # Project imports
+from tests import ics_builder
 from tests.factories import (
     ActivityPayloadFactory,
     CollaboratorPayloadFactory,
@@ -33,6 +38,7 @@ from tests.factories import (
     TripFactory,
     TripPayloadFactory,
 )
+from tests.fake_tripsy import BASE, FakeTripsy, transport
 from tripsy_exim.store import Archive
 
 # Wire-shaped payloads, as the API returns them.
@@ -103,3 +109,52 @@ def _seed_random_data(faker_seed: int) -> None:
 def archive(tmp_path: Path) -> Archive:
     """An empty archive rooted in a temporary directory."""
     return Archive(tmp_path / "archive")
+
+
+####################################################################
+#
+@pytest.fixture
+def fake_tripsy() -> FakeTripsy:
+    """An empty in-memory Tripsy, with expense permission."""
+    return FakeTripsy()
+
+
+####################################################################
+#
+@pytest.fixture
+def restricted_tripsy() -> FakeTripsy:
+    """
+    A Tripsy that withholds price and currency.
+
+    The real account is premium, so this response cannot be observed from
+    outside -- this fixture is the only way that path is ever exercised.
+    """
+    return FakeTripsy(can_see_expenses=False)
+
+
+####################################################################
+#
+@pytest.fixture
+def tripsy_client(fake_tripsy: FakeTripsy) -> Iterator[httpx.Client]:
+    """An httpx client wired to the fake, needing no credentials."""
+    with httpx.Client(
+        base_url=BASE, transport=transport(fake_tripsy)
+    ) as client:
+        yield client
+
+
+####################################################################
+#
+@pytest.fixture
+def ics_calendar(faker: Faker) -> Callable[..., str]:
+    """
+    Build synthetic TripIt-shaped .ics text.
+
+    Takes the same keyword arguments as `ics_builder.build_calendar`, so a
+    test asks for the defects it wants to exercise.
+    """
+
+    def build(**kwargs: Any) -> str:
+        return ics_builder.to_ics(ics_builder.build_calendar(faker, **kwargs))
+
+    return build

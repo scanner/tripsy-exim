@@ -29,6 +29,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "rich",
+    "timezonefinder",
 ]
 
 [project.scripts]

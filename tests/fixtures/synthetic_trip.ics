@@ -1,0 +1,96 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//tripsy-exim//synthetic test calendar//EN
+METHOD:PUBLISH
+X-WR-CALDESC:Line face relate down.
+X-WR-CALNAME:Trip to North Ethanside
+BEGIN:VEVENT
+SUMMARY:User-friendly optimizing leverage
+DTSTART;VALUE=DATE:20270601
+DTEND;VALUE=DATE:20270610
+DTSTAMP:20270101T000000Z
+UID:8fee469a-2d5a-4148-a419-034a891bb895@example.invalid
+DESCRIPTION:Drug think that majority save drop common.
+LOCATION:3245 Gonzalez Parks Suite 935
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Kyōto Nishiki Café
+DTSTART;VALUE=DATE:20270601
+DTEND;VALUE=DATE:20270602
+DTSTAMP:20270101T000000Z
+UID:item-f75ae42c-b3c6-42f6-a9ec-ebc510578000@example.invalid
+DESCRIPTION:Cañada Súper Mercado -- Pass low spend across size card teac
+ her behavior.
+LOCATION:Zürich Hauptbahnhof Kiosk
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Kyōto Nishiki Café
+DTSTART:20270602T090000
+DTEND:20270602T110000
+DTSTAMP:20270101T000000Z
+UID:item-a4fb580e-b941-455d-bc44-85c02479c825@example.invalid
+DESCRIPTION:Ωμέγα Ταβέρνα -- Local its Mrs prepare hand arm di
+ scussion.
+LOCATION:Ωμέγα Ταβέρνα
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Horizontal solution-oriented Graphical User Interface
+DTSTART:20270603T090000Z
+DTEND:20270603T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-39ca7097-480d-4f98-9490-8886bbce3614@example.invalid
+DESCRIPTION:Run hard young woman measure hot manager protect.
+GEO:22.308;113.9185
+LOCATION:62488 Diane Freeway Suite 348
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Advanced static info-mediaries
+DTSTART:20270604T090000Z
+DTEND:20270604T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-cccfaefc-378d-4963-90c0-2dc8cc35d2b5@example.invalid
+DESCRIPTION:Which bit watch court lose.
+GEO:35.6812;139.7671
+LOCATION:9881 Sean Flat Suite 133
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Proactive coherent system engine
+DTSTART:20270605T090000Z
+DTEND:20270605T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-58802df0-2fc8-4114-bd5f-ae89c739acb4@example.invalid
+DESCRIPTION:Like up onto save produce talk.
+GEO:37.6213;-122.379
+LOCATION:7547 Abigail Trail
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Decentralized maximized customer loyalty
+DTSTART:20270606T090000Z
+DTEND:20270606T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-f181472b-54f2-49a2-914f-30d07473ac3f@example.invalid
+DESCRIPTION:Staff company generation ask future make.
+GEO:35.6812;139.7671
+LOCATION:699 Kevin Grove Apt. 373
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:De-engineered didactic alliance
+DTSTART:20270607T090000Z
+DTEND:20270607T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-ef0ca351-c4f0-42d5-bef4-b94a18cbeb01@example.invalid
+DESCRIPTION:Light show heavy very manage actually.
+GEO:22.308;113.9185
+LOCATION:8007 Mcdonald Rest
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Right-sized methodical ability
+DTSTART:20270608T090000Z
+DTEND:20270608T110000Z
+DTSTAMP:20270101T000000Z
+UID:item-607a4c2b-0b62-4a64-befe-f15da9984777@example.invalid
+DESCRIPTION:Heart race individual citizen daughter.
+GEO:37.6213;-122.379
+LOCATION:076 Clark Burg
+END:VEVENT
+END:VCALENDAR
