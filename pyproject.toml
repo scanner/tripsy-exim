@@ -109,6 +109,10 @@ exclude = [
     '.*[-_]cache',
     '\.venv',
     'fixtures',
+    # One-off diagnostic scripts run by hand against the live API.  They
+    # are not part of the package and are not committed; annotating
+    # icalendar's very wide value union in throwaway code buys nothing.
+    'probe_scripts',
 ]
 ignore_missing_imports = true
 check_untyped_defs = true

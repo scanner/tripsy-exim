@@ -1,6 +1,7 @@
 ROOT_DIR := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-.PHONY: setup sync lint ruff-format ruff-check mypy test coverage clean help
+.PHONY: setup sync lint pre-commit ruff-format ruff-check mypy test \
+        test-live coverage clean help
 
 setup: ## Initial project setup: install dependencies and pre-commit hooks
 	uv sync
@@ -10,7 +11,17 @@ setup: ## Initial project setup: install dependencies and pre-commit hooks
 sync: ## Sync dependencies
 	uv sync
 
-lint: sync ## Run all pre-commit hooks (ruff, ruff-format, mypy, etc)
+# Runs the tools directly rather than through pre-commit, because
+# pre-commit only ever sees files git knows about -- a new module that has
+# not been added yet is silently skipped, which is exactly when a first
+# look at it is worth most.  These are the same three commands CI runs.
+#
+lint: sync ## Run ruff, ruff-format, and mypy over every file, tracked or not
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy .
+
+pre-commit: sync ## Run the pre-commit hooks over all tracked files
 	uv run pre-commit run --all-files
 
 ruff-check: sync ## Run just the ruff linter
