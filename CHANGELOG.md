@@ -34,3 +34,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   load, `backup` for a scheduled export, `interactive` for a handful of
   calls with someone waiting.  Each sets its own request timeout, since
   how long to hang on for is the same judgement as how fast to go.
+- Parse a TripIt-exported `.ics` file into a trip and its child objects.
+  The export carries no timezone and no type information, so zones are
+  derived from each event's coordinates and what an event *is* is inferred
+  from its wording.
+- Every parsed event comes with a note saying what was decided and why.
+  Events that matched no rule become activities and are listed, so a
+  misfiled event can be caught before an import writes it.
+- Report a duplicate create accurately: suppression covers one collection
+  of one trip, and a deleted trip keeps its identifier, so neither a
+  retyped object nor a deleted trip can be fixed by re-running an import.

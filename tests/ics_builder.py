@@ -53,6 +53,24 @@ LANDMARKS: tuple[tuple[str, float, float], ...] = (
     ("America/New_York", 40.7128, -74.0060),
 )
 
+# Wording TripIt generates itself for lodging and flight events, which is
+# what the parser's two classification rules key on.  Invented text around
+# them, but the shape of the phrase is the part that matters: a generator
+# that only produced free-text summaries would leave both rules untested
+# and every event would look like the unclassified default.
+#
+LODGING_SUMMARIES: tuple[str, ...] = (
+    "Check in to Hotel Meridian",
+    "Check-in: Seaside Inn",
+    "Check out of Hotel Meridian",
+)
+
+FLIGHT_SUMMARIES: tuple[str, ...] = (
+    "Flight to Reykjavik",
+    "Flight XX 1234 departs",
+    "Connecting flight",
+)
+
 # Invented strings that exercise the non-ASCII path.
 #
 NON_ASCII_SAMPLES: tuple[str, ...] = (
@@ -96,6 +114,7 @@ def build_event(
     with_geo: bool = True,
     non_ascii: bool = False,
     landmark: tuple[str, float, float] | None = None,
+    summary: str | None = None,
 ) -> Event:
     """
     Build one VEVENT carrying the properties the real export carries.
@@ -110,6 +129,8 @@ def build_event(
         non_ascii: True to draw text from the non-ASCII samples.
         landmark: Coordinates to use, so a test can assert the derived
             timezone.  Chosen from LANDMARKS when not given.
+        summary: Fixed SUMMARY text, for exercising classification.
+            Invented text is used when not given.
 
     Returns:
         An icalendar Event.
@@ -121,17 +142,17 @@ def build_event(
     event.add("dtend", ends_at)
 
     if non_ascii:
-        summary = faker.random_element(NON_ASCII_SAMPLES)
+        drawn = faker.random_element(NON_ASCII_SAMPLES)
         location = faker.random_element(NON_ASCII_SAMPLES)
         description = (
             f"{faker.random_element(NON_ASCII_SAMPLES)} -- {faker.sentence()}"
         )
     else:
-        summary = faker.catch_phrase()
+        drawn = faker.catch_phrase()
         location = faker.street_address()
         description = faker.sentence()
 
-    event.add("summary", summary)
+    event.add("summary", summary if summary is not None else drawn)
     event.add("location", location)
     event.add("description", description)
 
@@ -151,6 +172,8 @@ def build_calendar(
     date_only: int = 0,
     floating: int = 0,
     non_ascii: int = 0,
+    lodging: int = 0,
+    flights: int = 0,
     landmark: tuple[str, float, float] | None = None,
     start: date | None = None,
 ) -> Calendar:
@@ -168,6 +191,8 @@ def build_calendar(
         date_only: How many are all-day rather than timed.
         floating: How many carry a naive, floating time.
         non_ascii: How many draw non-ASCII text.
+        lodging: How many carry TripIt's check-in/check-out wording.
+        flights: How many carry TripIt's flight wording.
         landmark: Fix the coordinates, to assert a derived timezone.
         start: First day of the trip.  Defaults to a fixed date.
 
@@ -183,6 +208,8 @@ def build_calendar(
         ("date_only", date_only),
         ("floating", floating),
         ("non_ascii", non_ascii),
+        ("lodging", lodging),
+        ("flights", flights),
     ):
         if count > items:
             raise ValueError(f"{name}={count} exceeds items={items}")
@@ -220,6 +247,15 @@ def build_calendar(
             starts = datetime(day.year, day.month, day.day, 9, 0, tzinfo=UTC)
             ends = datetime(day.year, day.month, day.day, 11, 0, tzinfo=UTC)
 
+        # Classifiable wording is applied from the end of the run, so it
+        # does not collide with the defect counts taken from the front.
+        #
+        summary: str | None = None
+        if index >= items - lodging:
+            summary = str(faker.random_element(LODGING_SUMMARIES))
+        elif index >= items - lodging - flights:
+            summary = str(faker.random_element(FLIGHT_SUMMARIES))
+
         calendar.add_component(
             build_event(
                 faker,
@@ -228,6 +264,7 @@ def build_calendar(
                 with_geo=index >= missing_geo,
                 non_ascii=index < non_ascii,
                 landmark=landmark,
+                summary=summary,
             )
         )
     return calendar

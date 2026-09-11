@@ -159,6 +159,99 @@ class TestIdempotency:
         check.equal(second.status_code, 200, "suppressed")
         check.equal(len(second.content), 0, "empty body")
 
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "second_trip,collection,expected,why",
+        [
+            # The control, and the only case that suppresses.
+            (False, "hostings", 200, "same trip, same collection"),
+            # A reclassified import lands here: the object is created a
+            # second time and the first copy stays where it was.
+            (False, "activities", 201, "same trip, other collection"),
+            # And the trip bounds the scope from the other side.
+            (True, "hostings", 201, "other trip, same collection"),
+        ],
+    )
+    def test_child_suppression_is_scoped_to_one_collection_of_one_trip(
+        self,
+        tripsy_client: httpx.Client,
+        second_trip: bool,
+        collection: str,
+        expected: int,
+        why: str,
+    ) -> None:
+        """
+        GIVEN: a hosting already created under one trip
+        WHEN:  the same identifier is posted to another collection, or
+               to another trip
+        THEN:  only a repeat into the very same collection of the very
+               same trip is suppressed
+
+        Verified against the live API 2026-09-10.  Worth three cases
+        rather than one: this fake's docstring long claimed the scope was
+        the whole trip, and a single same-collection test could not tell
+        the two apart.
+        """
+        first = tripsy_client.post("/v1/trips", json={"name": "One"}).json()
+        other = tripsy_client.post("/v1/trips", json={"name": "Two"}).json()
+        payload = {"internal_identifier": "child-1", "name": "Thing"}
+        tripsy_client.post(f"/v1/trip/{first['id']}/hostings", json=payload)
+
+        target = other if second_trip else first
+        again = tripsy_client.post(
+            f"/v1/trip/{target['id']}/{collection}", json=payload
+        )
+
+        assert again.status_code == expected, why
+
+    ####################################################################
+    #
+    def test_a_deleted_trip_still_owns_its_identifier(
+        self, tripsy_client: httpx.Client
+    ) -> None:
+        """
+        GIVEN: a trip that has been deleted
+        WHEN:  its identifier is posted again
+        THEN:  nothing is created -- deleting a trip does not release
+               its identifier, so a delete cannot be undone by re-running
+               the import that made it
+
+        Verified against the live API 2026-09-10.
+        """
+        payload = {
+            "internal_identifier": "txim-ics-deleted-trip",
+            "name": "Going away",
+        }
+        trip = tripsy_client.post("/v1/trips", json=payload).json()
+        tripsy_client.delete(f"/v1/trips/{trip['id']}")
+
+        again = tripsy_client.post("/v1/trips", json=payload)
+
+        check.equal(again.status_code, 200, "suppressed")
+        check.equal(len(again.content), 0, "and created nothing")
+
+    ####################################################################
+    #
+    def test_deleting_a_trip_twice_is_a_not_found(
+        self, tripsy_client: httpx.Client
+    ) -> None:
+        """
+        GIVEN: a trip already deleted
+        WHEN:  it is deleted again
+        THEN:  404 rather than a second 204, so a resumed cleanup can
+               tell "already done" from "done just now"
+
+        Verified against the live API 2026-09-10.
+        """
+        trip = tripsy_client.post("/v1/trips", json={"name": "Once"}).json()
+
+        first = tripsy_client.delete(f"/v1/trips/{trip['id']}")
+        second = tripsy_client.delete(f"/v1/trips/{trip['id']}")
+
+        check.equal(first.status_code, 204, "deleted")
+        check.equal(second.status_code, 404, "and stays deleted")
+
 
 ########################################################################
 ########################################################################
