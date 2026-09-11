@@ -21,10 +21,26 @@ from pathlib import Path
 from typing import Any
 
 # Project imports
-from tripsy_exim.sources import EventNote, ParsedCalendar, parse
+from tripsy_exim.sources import (
+    ACTIVITY,
+    HOSTING,
+    TRANSPORTATION,
+    EventNote,
+    ParsedCalendar,
+    parse,
+    uuid_from_uid,
+)
 from tripsy_exim.store import Archive, local_key, write_json
 
 REPORT_FILENAME = "report.json"
+
+# The parser reports a kind; the archive stores a collection.
+#
+COLLECTION_FOR_KIND: dict[str, str] = {
+    HOSTING: "hostings",
+    ACTIVITY: "activities",
+    TRANSPORTATION: "transportations",
+}
 
 
 ########################################################################
@@ -126,10 +142,35 @@ def _write_report(
         },
         "unclassified": [_note(n) for n in parsed.unclassified],
         "guessed_timezones": [_note(n) for n in parsed.guessed_timezones],
+        "index": _index(parsed),
     }
     path = archive.trip_dir(trip_key) / REPORT_FILENAME
     write_json(path, document)
     return path
+
+
+####################################################################
+#
+def _index(parsed: ParsedCalendar) -> dict[str, dict[str, str]]:
+    """
+    Map each source uuid to the object it produced.
+
+    Corrections are keyed by uuid because that is the one identity that
+    survives both a re-export and a change of identifier namespace -- a
+    shaping run and the real run mint different identifiers from the same
+    uuid.  Resolving a correction back to an object needs this map, and
+    the collection belongs in it because a retype is what changes it.
+    """
+    index: dict[str, dict[str, str]] = {}
+    for note in parsed.notes:
+        token = uuid_from_uid(note.uid)
+        if token is None:
+            continue
+        index[token] = {
+            "identifier": note.identifier,
+            "collection": COLLECTION_FOR_KIND[note.kind],
+        }
+    return index
 
 
 ####################################################################

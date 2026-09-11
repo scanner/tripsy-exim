@@ -20,6 +20,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tripsy-exim stage --scratch` mints a fresh throwaway namespace for
   a shaping run, keeping its trips beside the real ones in the archive
   and distinguishable from them.
+- Corrections as an overlay, keyed by the source uuid and stored outside
+  the trip directories, so a correction made during a trial run still
+  applies to the real one.  A correction can retype an object between
+  collections or set fields on it, and is applied on the way out rather
+  than folded into what the parser produced.
 - Canonical trip models: `Trip`, `Hosting`, `Activity`, `Transportation`,
   `Expense`, and `Collaborator`.
 - Local archive of canonical trips on disk, with a sync manifest and an

@@ -11,6 +11,17 @@ and `sources` stay parsers.
 """
 
 # 3rd party imports
+from tripsy_exim.sync.overrides import (
+    OVERRIDES_DIRNAME,
+    Applied,
+    Override,
+    OverrideSet,
+    apply_overrides,
+    load_overrides,
+    overrides_path,
+    retyped,
+    save_overrides,
+)
 from tripsy_exim.sync.staging import (
     REPORT_FILENAME,
     StagedTrip,
@@ -19,8 +30,17 @@ from tripsy_exim.sync.staging import (
 )
 
 __all__ = [
+    "OVERRIDES_DIRNAME",
     "REPORT_FILENAME",
+    "Applied",
+    "Override",
+    "OverrideSet",
     "StagedTrip",
+    "apply_overrides",
+    "load_overrides",
+    "overrides_path",
+    "retyped",
+    "save_overrides",
     "stage",
     "stage_file",
 ]
