@@ -509,6 +509,46 @@ class TestPassthrough:
 
     ####################################################################
     #
+    def test_export_metadata_is_dropped(self, faker: Faker) -> None:
+        """
+        GIVEN: an event carrying DTSTAMP, as every real export does
+        WHEN:  it is parsed
+        THEN:  it is not retained -- it names the export, not the trip,
+               and is minted fresh every time a file is generated
+        """
+        calendar = ics_builder.build_calendar(faker, items=1)
+
+        retained = (
+            parse(ics_builder.to_ics(calendar)).activities[0].source_extras
+        )
+
+        check.is_not_in("DTSTAMP", retained)
+
+    ####################################################################
+    #
+    def test_dates_are_kept_as_iso_text(self, faker: Faker) -> None:
+        """
+        GIVEN: an unmapped property whose value is a date
+        WHEN:  it is parsed
+        THEN:  it is stored as ISO 8601, not as a Python repr
+
+        icalendar's date values stringify to their repr, so a plain str()
+        would put 'vDDDTypes(...)' in the archive instead of a value.
+        """
+        calendar = ics_builder.build_calendar(faker, items=1)
+        event = [c for c in calendar.walk() if c.name == "VEVENT"][-1]
+        event.add("x-tripit-booked-on", datetime(2027, 3, 4, tzinfo=UTC))
+
+        retained = (
+            parse(ics_builder.to_ics(calendar)).activities[0].source_extras
+        )
+
+        kept = retained.get("X-TRIPIT-BOOKED-ON", "")
+        check.is_in("2027-03-04", kept)
+        check.is_not_in("vDDD", kept)
+
+    ####################################################################
+    #
     def test_non_ascii_text_survives_a_round_trip(self, faker: Faker) -> None:
         """
         GIVEN: an event whose text is non-ASCII, as real ones are

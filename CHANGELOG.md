@@ -53,3 +53,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Report a duplicate create accurately: suppression covers one collection
   of one trip, and a deleted trip keeps its identifier, so neither a
   retyped object nor a deleted trip can be fixed by re-running an import.
+
+### Fixed
+
+- Keep unmapped date properties from the source as ISO 8601 text.  They
+  were stored as a Python repr, which no reader could use.
+- Drop `DTSTAMP` rather than archiving it.  It records when an export
+  file was generated, not anything about the trip.

@@ -89,6 +89,13 @@ _CONSUMED = frozenset(
     {"UID", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "DTSTART", "DTEND"}
 )
 
+# Properties that describe the export rather than the trip.  They are the
+# one thing worth dropping outright: DTSTAMP is minted fresh on every
+# export, so retaining it would record when a file was generated and
+# nothing about the travel it describes.
+#
+_EXPORT_METADATA = frozenset({"DTSTAMP"})
+
 HOSTING = "hosting"
 ACTIVITY = "activity"
 TRANSPORTATION = "transportation"
@@ -297,13 +304,28 @@ def _passthrough(event: Component) -> dict[str, Any]:
     to put, and losing it on import is the exact failure this project
     exists in response to.
     """
+    skip = _CONSUMED | _EXPORT_METADATA | {"BEGIN", "END"}
     return {
-        str(name): str(value)
+        str(name): _as_text(value)
         for name, value in event.property_items(recursive=False)
-        if str(name).upper() not in _CONSUMED
-        and str(name).upper() != "BEGIN"
-        and str(name).upper() != "END"
+        if str(name).upper() not in skip
     }
+
+
+####################################################################
+#
+def _as_text(value: Any) -> str:
+    """
+    Render one icalendar property value as text.
+
+    Date and time properties are objects whose `str()` is a Python repr,
+    so they are taken through `.dt` and rendered as ISO 8601.  Everything
+    else stringifies to the text it already holds.
+    """
+    moment = getattr(value, "dt", None)
+    if moment is not None and hasattr(moment, "isoformat"):
+        return str(moment.isoformat())
+    return str(value)
 
 
 ####################################################################
