@@ -399,12 +399,16 @@ def _build(
 
 ####################################################################
 #
-def parse(text: str) -> ParsedCalendar:
+def parse(text: str, namespace: str = TRIPIT_UID_NAMESPACE) -> ParsedCalendar:
     """
     Parse one TripIt-exported calendar into canonical objects.
 
     Args:
         text: The contents of a `.ics` file.
+        namespace: The identifier namespace to mint into.  A shaping run
+            passes its own so the objects it creates occupy a separate key
+            space -- identifiers are never released once used, so a run
+            that will be thrown away must not spend the real ones.
 
     Returns:
         The trip, its child objects, and a note per event.  Read
@@ -426,7 +430,9 @@ def parse(text: str) -> ParsedCalendar:
         else:
             items.append(event)
 
-    parsed = ParsedCalendar(trip=_build_trip(calendar, trip_event, items))
+    parsed = ParsedCalendar(
+        trip=_build_trip(calendar, trip_event, items, namespace)
+    )
 
     zones = _zones_for(items)
 
@@ -469,7 +475,7 @@ def parse(text: str) -> ParsedCalendar:
         kind, confident, reason = classify(
             _text(event, "SUMMARY"), _text(event, "DESCRIPTION")
         )
-        identifier = mint(TRIPIT_UID_NAMESPACE, token)
+        identifier = mint(namespace, token)
         built = _build(
             kind,
             event,
@@ -564,6 +570,7 @@ def _build_trip(
     calendar: Component,
     trip_event: Component | None,
     items: list[Component],
+    namespace: str = TRIPIT_UID_NAMESPACE,
 ) -> Trip:
     """
     Build the trip envelope from calendar metadata and the event span.
@@ -576,6 +583,7 @@ def _build_trip(
         calendar: The VCALENDAR, for its X-WR- properties.
         trip_event: The one non-item event, when the file has one.
         items: The itinerary events, used for the span as a fallback.
+        namespace: The identifier namespace to mint into.
 
     Returns:
         A trip, identified by the trip-level event's uuid when there is
@@ -588,7 +596,7 @@ def _build_trip(
     if trip_event is not None:
         token = uuid_from_uid(_text(trip_event, "UID"))
         if token is not None:
-            identifier = mint(TRIPIT_UID_NAMESPACE, token)
+            identifier = mint(namespace, token)
 
     # The trip-level event usually encloses its items, but nothing in the
     # format guarantees it.  Spanning the union means an item outside a

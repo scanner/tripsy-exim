@@ -282,7 +282,7 @@ class Archive:
             "kind": type(obj).__name__,
             "data": merged.model_dump(mode="json", exclude_unset=True),
         }
-        _write_json(path, document)
+        write_json(path, document)
         return path
 
     ####################################################################
@@ -383,7 +383,7 @@ class Archive:
             / kind.lower()
             / f"{quarantine_key(payload)}.json"
         )
-        _write_json(path, document)
+        write_json(path, document)
         return path
 
     ####################################################################
@@ -415,7 +415,7 @@ class Archive:
     def write_manifest(self, manifest: dict[str, Any]) -> Path:
         """Store the sync manifest."""
         manifest = {**manifest, "schema_version": ARCHIVE_SCHEMA_VERSION}
-        _write_json(self.manifest_path, manifest)
+        write_json(self.manifest_path, manifest)
         return self.manifest_path
 
     ####################################################################
@@ -445,7 +445,7 @@ class Archive:
 
 ####################################################################
 #
-def _write_json(path: Path, document: dict[str, Any]) -> None:
+def write_json(path: Path, document: dict[str, Any]) -> None:
     """Write JSON through a temporary file and an atomic rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")

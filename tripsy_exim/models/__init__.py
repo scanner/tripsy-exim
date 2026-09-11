@@ -22,7 +22,14 @@ from tripsy_exim.models.collaborator import Collaborator
 from tripsy_exim.models.common import CollaboratorPermissions, ObjectOwner
 from tripsy_exim.models.expense import Expense
 from tripsy_exim.models.hosting import Hosting
-from tripsy_exim.models.identifiers import IDENTIFIER_PREFIX, is_minted, mint
+from tripsy_exim.models.identifiers import (
+    IDENTIFIER_PREFIX,
+    SCRATCH_PREFIX,
+    is_minted,
+    is_scratch,
+    mint,
+    scratch_namespace,
+)
 from tripsy_exim.models.transportation import Transportation
 from tripsy_exim.models.trip import Trip
 
@@ -42,5 +49,8 @@ __all__ = [
     "Trip",
     "UtcDatetime",
     "is_minted",
+    "is_scratch",
     "mint",
+    "SCRATCH_PREFIX",
+    "scratch_namespace",
 ]

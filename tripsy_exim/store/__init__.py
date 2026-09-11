@@ -21,6 +21,7 @@ from tripsy_exim.store.archive import (
     Archive,
     local_key,
     quarantine_key,
+    write_json,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "Archive",
     "local_key",
     "quarantine_key",
+    "write_json",
 ]

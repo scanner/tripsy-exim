@@ -11,6 +11,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Initial project scaffolding.
+- `tripsy-exim stage` parses TripIt `.ics` exports straight into the
+  local archive, with no network access, so a trip can be reviewed and
+  corrected before anything is posted to Tripsy.  The parser's report
+  is stored beside each trip.
+- Parse into a chosen identifier namespace, so a trial run can be
+  thrown away without spending the identifiers a real import needs.
+- `tripsy-exim stage --scratch` mints a fresh throwaway namespace for
+  a shaping run, keeping its trips beside the real ones in the archive
+  and distinguishable from them.
 - Canonical trip models: `Trip`, `Hosting`, `Activity`, `Transportation`,
   `Expense`, and `Collaborator`.
 - Local archive of canonical trips on disk, with a sync manifest and an
