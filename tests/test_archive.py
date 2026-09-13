@@ -295,7 +295,9 @@ class TestArchiveWrites:
         THEN:  both are still there and still distinguishable
         """
         hosting = Hosting.model_validate(
-            hosting_payload_factory(sort_order=3, custom_icon="bed")
+            hosting_payload_factory(
+                tripsy_unique_identifier="XQQn4gUzYnh4", custom_icon="bed"
+            )
         ).with_source(tripit_segment_id="abc-123")
 
         path = archive.write(hosting, trip_key="t")
@@ -304,7 +306,7 @@ class TestArchiveWrites:
 
         check.equal(
             restored.wire_extras,
-            {"sort_order": 3, "custom_icon": "bed"},
+            {"tripsy_unique_identifier": "XQQn4gUzYnh4", "custom_icon": "bed"},
             "undocumented Tripsy fields",
         )
         check.equal(

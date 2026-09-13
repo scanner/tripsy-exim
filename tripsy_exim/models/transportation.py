@@ -58,6 +58,7 @@ class Transportation(CanonicalModel):
             "distance_meters",
             "price",
             "currency",
+            "sort_order",
             "departure_apple_maps_id",
         }
     )
@@ -117,6 +118,14 @@ class Transportation(CanonicalModel):
     distance_meters: int | None = None
     price: Money | None = None
     currency: str | None = None
+
+    # One dense sequence across a whole trip rather than per collection:
+    # activities, hostings and transportations share it, and the app
+    # renders a trip in it.  The API stores what it is given and computes
+    # nothing, so an object created without one holds 0 -- verified
+    # 2026-09-12.  The importer numbers a trip chronologically.
+    #
+    sort_order: int | None = None
 
     # Read-only.  `arrival_apple_maps_id` is returned by v2 but is not in
     # the documented writable set, unlike its departure counterpart.

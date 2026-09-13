@@ -263,6 +263,11 @@ class FakeTripsy:
             **payload,
         }
         if collection in ("hostings", "activities", "transportations"):
+            # The server computes no ordering: an object created without
+            # a sort_order holds 0, and a whole trip imported without one
+            # stacks on the same position.  Verified 2026-09-12.
+            #
+            child.setdefault("sort_order", 0)
             child.setdefault(
                 "owner",
                 {
