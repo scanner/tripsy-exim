@@ -26,8 +26,10 @@ from tripsy_exim.sync.importer import (
     declare_merge,
     numbered,
     plan_trip,
+    spanning,
     staged_children,
     staged_trip,
+    undo_merge,
     upload_trip,
 )
 
@@ -537,3 +539,75 @@ class TestMerge:
         check.equal(plan.duplicates, 1, "the shared flight was skipped")
         flights = [o for o in plan.objects if o.collection == "transportations"]
         check.equal(len(flights), 1, "and planned once")
+
+    ####################################################################
+    #
+    def test_a_merged_trip_spans_what_it_absorbs(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a trip absorbing one that runs outside its own dates
+        WHEN:  the trip record is prepared
+        THEN:  its dates widen to cover both
+
+        The record doing the absorbing need not be the one that ran
+        longest -- a weekend reached the archive as a hotel booking and a
+        day trip, and the day is the record with more objects.  Left
+        alone the trip would say it lasted an afternoon.
+        """
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="San Francisco, CA, July 2012",
+                    start="2012-07-06",
+                    end="2012-07-08",
+                    objects=[b.lodging()],
+                ),
+                b.trip(
+                    name="Angel Island",
+                    start="2012-07-07",
+                    end="2012-07-07",
+                    objects=[b.activity(), b.restaurant()],
+                ),
+            ),
+        )
+        keys = archive.trip_keys()
+        day = next(
+            k
+            for k in keys
+            if str(getattr(staged_trip(archive, k), "name", ""))
+            == "Angel Island"
+        )
+        weekend = next(k for k in keys if k != day)
+
+        declare_merge(archive, weekend, day)
+        record = staged_trip(archive, day)
+        assert record is not None
+        widened = spanning(archive, record, day)
+
+        check.equal(str(widened.starts_at), "2012-07-06", "widened back")
+        check.equal(str(widened.ends_at), "2012-07-08", "and forward")
+
+    ####################################################################
+    #
+    def test_a_merge_can_be_undone(
+        self, archive: Archive, pair: tuple[str, str]
+    ) -> None:
+        """
+        GIVEN: a declared merge
+        WHEN:  it is undone
+        THEN:  the trip plans on its own again
+
+        Which direction a merge runs decides the surviving trip's name
+        and dates, so getting it the wrong way round has to be fixable.
+        """
+        smaller, larger = pair
+        declare_merge(archive, smaller, larger)
+        merged = plan_trip(archive, larger).total
+
+        undo_merge(archive, smaller)
+
+        check.less(plan_trip(archive, larger).total, merged)
+        with pytest.raises(ValueError, match="not merged"):
+            undo_merge(archive, smaller)

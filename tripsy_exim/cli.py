@@ -51,6 +51,7 @@ from tripsy_exim.sync.importer import (
     plan_trip,
     resolve_trip_key,
     staged_trip,
+    undo_merge,
     upload_trip,
     uploaded_trips,
 )
@@ -475,7 +476,13 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
 #
 @main.command("merge")
 @click.argument("absorbed")
-@click.argument("target")
+@click.argument("target", required=False)
+@click.option(
+    "--undo",
+    is_flag=True,
+    default=False,
+    help="Release ABSORBED so it uploads as its own trip again.",
+)
 @click.option(
     "--archive",
     "archive_root",
@@ -487,7 +494,10 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
     ),
 )
 def merge_command(
-    absorbed: str, target: str, archive_root: Path | None
+    absorbed: str,
+    target: str | None,
+    archive_root: Path | None,
+    undo: bool,
 ) -> None:
     """
     Upload one staged trip as part of another.
@@ -505,6 +515,18 @@ def merge_command(
     name, which is how they were found in the first place.
     """
     archive = staged_archive(archive_root)
+
+    if undo:
+        try:
+            undo_merge(archive, absorbed)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"{absorbed} uploads as its own trip again")
+        return
+
+    if target is None:
+        raise click.UsageError("name the trip to merge into, or pass --undo")
+
     try:
         declare_merge(archive, absorbed, target)
     except ValueError as exc:

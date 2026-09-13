@@ -344,6 +344,71 @@ def declare_merge(archive: Archive, absorbed: str, target: str) -> None:
 
 ####################################################################
 #
+def undo_merge(archive: Archive, absorbed: str) -> None:
+    """
+    Stop uploading one trip as part of another.
+
+    Args:
+        archive: The archive to record in.
+        absorbed: Key of the trip to release.
+
+    Raises:
+        ValueError: That trip is not declared as part of anything.
+    """
+    manifest: dict[str, Any] = archive.read_manifest()
+    record = manifest.get(MERGED) or {}
+    if absorbed not in record:
+        raise ValueError(f"{absorbed} is not merged into anything")
+    del record[absorbed]
+    manifest[MERGED] = record
+    archive.write_manifest(manifest)
+
+
+####################################################################
+#
+def spanning(archive: Archive, trip: Trip, trip_key: str) -> Trip:
+    """
+    Widen a merged trip's dates to cover everything it absorbs.
+
+    A trip's declared range comes from the record it was parsed from, and
+    the record absorbing the others need not be the one that ran longest:
+    a weekend in San Francisco reached the archive as a hotel booking and
+    a day on Angel Island, and the day is the record with more objects.
+    Left alone, the trip would say it lasted an afternoon.
+
+    Args:
+        archive: The archive holding the staged trips.
+        trip: The trip record as parsed.
+        trip_key: Its key.
+
+    Returns:
+        The trip, its dates widened when it absorbs anything that runs
+        outside them.
+    """
+    absorbed = absorbed_by(archive, trip_key)
+    if not absorbed:
+        return trip
+
+    starts = [trip.starts_at] if trip.starts_at else []
+    ends = [trip.ends_at] if trip.ends_at else []
+    for key in absorbed:
+        other = staged_trip(archive, key)
+        if other is None:
+            continue
+        if other.starts_at:
+            starts.append(other.starts_at)
+        if other.ends_at:
+            ends.append(other.ends_at)
+
+    if not starts or not ends:
+        return trip
+    return trip.model_copy(
+        update={"starts_at": min(starts), "ends_at": max(ends)}
+    )
+
+
+####################################################################
+#
 def in_travel_order(archive: Archive, keys: list[str]) -> list[str]:
     """
     Put trip keys in the order the trips were travelled, oldest first.
@@ -521,7 +586,9 @@ def upload_trip(
     identifier = str(trip.internal_identifier or "")
     result = TripImport(trip_key=trip_key, name=str(trip.name or ""))
 
-    outcome = client.create_trip(trip.writable_payload())
+    outcome = client.create_trip(
+        spanning(archive, trip, trip_key).writable_payload()
+    )
     if isinstance(outcome, Created):
         result.trip_created = True
         result.trip_id = outcome.payload.get("id")
