@@ -10,6 +10,7 @@ the first run matches what the first run actually sends.
 """
 
 # system imports
+import json
 from typing import Any
 
 # 3rd party imports
@@ -20,9 +21,10 @@ import pytest_check as check
 from tests import tripit_builder as b
 from tripsy_exim.api import TripsyClient
 from tripsy_exim.store import Archive
-from tripsy_exim.sync import stage_export
+from tripsy_exim.sync import REPORT_FILENAME, stage_export
 from tripsy_exim.sync.importer import (
     child_ids_by_identifier,
+    corrections,
     declare_merge,
     numbered,
     plan_trip,
@@ -32,6 +34,7 @@ from tripsy_exim.sync.importer import (
     undo_merge,
     upload_trip,
 )
+from tripsy_exim.sync.overrides import OverrideSet, save_overrides
 
 
 ####################################################################
@@ -611,3 +614,102 @@ class TestMerge:
         check.less(plan_trip(archive, larger).total, merged)
         with pytest.raises(ValueError, match="not merged"):
             undo_merge(archive, smaller)
+
+
+########################################################################
+########################################################################
+#
+class TestCorrections:
+    """Tests for laying corrections over what is uploaded."""
+
+    ####################################################################
+    #
+    def test_a_correction_reaches_what_is_sent(self, archive: Archive) -> None:
+        """
+        GIVEN: a staged trip and a correction against one of its objects
+        WHEN:  the trip is planned
+        THEN:  the corrected value is what would be sent
+
+        The archive is meant to be the good copy, so a fact the export
+        never carried -- the address of a ferry pier -- belongs in it
+        rather than being repaired in Tripsy afterwards.
+        """
+        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
+        trip_key = archive.trip_keys()[0]
+        report = json.loads(
+            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
+        )
+        uuid = next(
+            u
+            for u, e in report["index"].items()
+            if e["collection"] == "transportations"
+        )
+
+        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
+        overrides.correct(
+            uuid,
+            departure_address="Sakurajima Port, Kagoshima, Japan",
+            name="Sakurajima Port to Kagoshima Port",
+        )
+        save_overrides(archive, overrides)
+
+        plan = plan_trip(archive, trip_key)
+        leg = next(o for o in plan.objects if o.collection == "transportations")
+        check.equal(leg.name, "Sakurajima Port to Kagoshima Port")
+
+    ####################################################################
+    #
+    def test_a_trip_with_no_corrections_is_unchanged(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a staged trip nobody has corrected
+        WHEN:  the trip is planned
+        THEN:  nothing about it differs
+
+        Most trips carry no correction at all, so the common path has to
+        cost nothing and change nothing.
+        """
+        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
+        trip_key = archive.trip_keys()[0]
+
+        check.equal(corrections(archive, trip_key), {})
+        leg = next(
+            o
+            for o in plan_trip(archive, trip_key).objects
+            if o.collection == "transportations"
+        )
+        check.equal(leg.name, "Example Ferry", "the carrier, as parsed")
+
+    ####################################################################
+    #
+    def test_a_correction_survives_a_change_of_namespace(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a correction made against a trip staged one way
+        WHEN:  the same export is staged into a scratch namespace
+        THEN:  the correction still reaches the object
+
+        Which is the whole reason corrections are keyed by the source
+        uuid: a shaping run mints different identifiers from the same
+        uuids, and a correction made during one has to apply to the real
+        run too.
+        """
+        document = b.export(b.trip(objects=[b.ferry()]))
+        stage_export(archive, document)
+        first = archive.trip_keys()[0]
+        report = json.loads(
+            (archive.trip_dir(first) / REPORT_FILENAME).read_text()
+        )
+        uuid = next(iter(report["index"]))
+        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
+        overrides.correct(uuid, name="corrected")
+        save_overrides(archive, overrides)
+
+        stage_export(archive, document, "scratch-abcd1234")
+        scratch = next(k for k in archive.trip_keys() if "scratch" in k)
+
+        found = corrections(archive, scratch)
+        check.equal(len(found), 1, "reached the scratch copy too")
+        check.is_in("corrected", [o.fields.get("name") for o in found.values()])

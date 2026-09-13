@@ -349,6 +349,7 @@ def _write_report(
     """Record what the parser could not decide, beside the trip."""
     document: dict[str, Any] = {
         "trip_key": trip_key,
+        "trip_uuid": parsed.trip_uuid,
         "counts": {
             "hostings": len(parsed.hostings),
             "activities": len(parsed.activities),

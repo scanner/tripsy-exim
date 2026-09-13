@@ -26,6 +26,7 @@ PATCH pass, not something a re-run does on its own.
 """
 
 # system imports
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,7 +49,12 @@ from tripsy_exim.models import (
     Trip,
 )
 from tripsy_exim.store import Archive
-from tripsy_exim.sync.overrides import MODEL_FOR_COLLECTION
+from tripsy_exim.sync.overrides import (
+    MODEL_FOR_COLLECTION,
+    Override,
+    load_overrides,
+)
+from tripsy_exim.sync.staging import REPORT_FILENAME
 
 # The order collections are written in.  Lodging and travel first, so a
 # partial run leaves a trip with its skeleton rather than its trimmings.
@@ -703,6 +709,70 @@ def _label(obj: Child) -> str:
 
 ####################################################################
 #
+def corrections(archive: Archive, trip_key: str) -> dict[str, Override]:
+    """
+    The corrections to lay over one trip's objects, by identifier.
+
+    Corrections are keyed by the source uuid, because that is the one
+    identity surviving a change of namespace -- a shaping run and the
+    real run mint different identifiers from the same uuid.  The objects
+    on disk are keyed by identifier, so the trip's own index is what
+    joins the two.
+
+    Args:
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to correct.
+
+    Returns:
+        Identifier to the correction against it, empty when the trip has
+        none or its report predates the uuid being recorded.
+    """
+    report = archive.trip_dir(trip_key) / REPORT_FILENAME
+    if not report.is_file():
+        return {}
+
+    document = json.loads(report.read_text(encoding="utf-8"))
+    trip_uuid = document.get("trip_uuid")
+    if not trip_uuid:
+        return {}
+
+    overrides = load_overrides(archive, str(trip_uuid))
+    if not overrides.entries:
+        return {}
+
+    index = document.get("index") or {}
+    out: dict[str, Override] = {}
+    for uuid, entry in overrides.entries.items():
+        located = index.get(uuid)
+        if located and located.get("identifier"):
+            out[str(located["identifier"])] = entry
+    return out
+
+
+####################################################################
+#
+def corrected(obj: Child, override: Override) -> Child:
+    """
+    Lay one correction over one object.
+
+    Only fields are applied here.  A retype moves an object between
+    collections, which is a change to the archive rather than to what is
+    sent, and `apply_overrides` is what does that.
+
+    Args:
+        obj: The object as it was staged.
+        override: The correction against it.
+
+    Returns:
+        A corrected copy, or the object itself when nothing applies.
+    """
+    if not override.fields:
+        return obj
+    return obj.model_copy(update=dict(override.fields))
+
+
+####################################################################
+#
 def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
     """
     Every object this trip uploads, its own and any it absorbs.
@@ -724,12 +794,22 @@ def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
     Returns:
         The objects to upload, and how many duplicates were left out.
     """
-    objects = list(staged_children(archive, trip_key))
+    fixes = corrections(archive, trip_key)
+    objects = [
+        corrected(obj, fixes[str(obj.internal_identifier)])
+        if str(obj.internal_identifier) in fixes
+        else obj
+        for obj in staged_children(archive, trip_key)
+    ]
     seen = {_fingerprint(obj) for obj in objects}
 
     duplicates = 0
     for absorbed in absorbed_by(archive, trip_key):
+        others = corrections(archive, absorbed)
         for obj in staged_children(archive, absorbed):
+            key = str(obj.internal_identifier)
+            if key in others:
+                obj = corrected(obj, others[key])
             mark = _fingerprint(obj)
             if mark in seen:
                 duplicates += 1

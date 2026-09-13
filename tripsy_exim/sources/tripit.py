@@ -428,7 +428,11 @@ def _parse_trip(
     # The export is the authority for identity, so its own name and
     # dates are the key the calendar side has to match.
     #
-    parsed = ParsedCalendar(trip=trip, join_key=trip_key(name, starts, ends))
+    parsed = ParsedCalendar(
+        trip=trip,
+        join_key=trip_key(name, starts, ends),
+        trip_uuid=token,
+    )
 
     # Children are disambiguated within their trip, not across the whole
     # export: the same hotel on two trips is two records.

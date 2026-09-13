@@ -155,6 +155,13 @@ class ParsedCalendar:
     #
     join_key: str | None = None
 
+    # The uuid the trip's identifier was minted from.  Corrections are
+    # keyed by it rather than by the identifier, so one made during a
+    # shaping run still reaches the same trip in the real one -- and
+    # minting is one-way, so it has to be carried rather than recovered.
+    #
+    trip_uuid: str | None = None
+
     ####################################################################
     #
     @property
@@ -487,12 +494,13 @@ def parse(text: str, namespace: str = TRIPIT_UID_NAMESPACE) -> ParsedCalendar:
         else:
             items.append(event)
 
-    trip = _build_trip(calendar, trip_event, items, namespace)
+    trip, trip_uuid = _build_trip(calendar, trip_event, items, namespace)
     parsed = ParsedCalendar(
         trip=trip,
         join_key=key_from_calendar(
             _text(calendar, "X-WR-CALDESC"), trip.starts_at, trip.ends_at
         ),
+        trip_uuid=trip_uuid,
     )
 
     zones = _zones_for(items)
@@ -632,7 +640,7 @@ def _build_trip(
     trip_event: Component | None,
     items: list[Component],
     namespace: str = TRIPIT_UID_NAMESPACE,
-) -> Trip:
+) -> tuple[Trip, str | None]:
     """
     Build the trip envelope from calendar metadata and the event span.
 
@@ -647,13 +655,14 @@ def _build_trip(
         namespace: The identifier namespace to mint into.
 
     Returns:
-        A trip, identified by the trip-level event's uuid when there is
-        one.
+        A trip, and the uuid its identifier was minted from -- None when
+        the calendar carries no trip-level event to take one from.
     """
     name = _text(calendar, "X-WR-CALNAME") or None
     description = _text(calendar, "X-WR-CALDESC") or None
 
     identifier = None
+    token = None
     if trip_event is not None:
         token = uuid_from_uid(_text(trip_event, "UID"))
         if token is not None:
@@ -668,13 +677,16 @@ def _build_trip(
         ([trip_event] if trip_event is not None else []) + items
     )
 
-    return Trip(
-        internal_identifier=identifier,
-        name=name,
-        description=description,
-        starts_at=starts,
-        ends_at=ends,
-        has_dates=starts is not None,
+    return (
+        Trip(
+            internal_identifier=identifier,
+            name=name,
+            description=description,
+            starts_at=starts,
+            ends_at=ends,
+            has_dates=starts is not None,
+        ),
+        token,
     )
 
 
