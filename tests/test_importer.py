@@ -23,6 +23,7 @@ from tripsy_exim.store import Archive
 from tripsy_exim.sync import stage_export
 from tripsy_exim.sync.importer import (
     child_ids_by_identifier,
+    declare_merge,
     numbered,
     plan_trip,
     staged_children,
@@ -349,3 +350,147 @@ class TestImport:
         """
         with pytest.raises(ValueError, match="no trip record"):
             upload_trip(api_client, archive, "txim-nothing-g01-deadbeef")
+
+
+########################################################################
+########################################################################
+#
+class TestMerge:
+    """Tests for uploading one staged trip as part of another."""
+
+    ####################################################################
+    #
+    @pytest.fixture
+    def pair(self, archive: Archive) -> tuple[str, str]:
+        """
+        Two trips of one journey, as the export records them.
+
+        One traveller flew from one airport and one from another, each
+        with their own room, and one of the two records the itinerary
+        they shared.
+        """
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="Honolulu, HI, November 2011",
+                    start="2011-11-09",
+                    end="2011-11-14",
+                    objects=[b.flight(), b.lodging()],
+                ),
+                b.trip(
+                    name="Honolulu, HI, November 2011",
+                    start="2011-11-09",
+                    end="2011-11-14",
+                    objects=[b.rail(), b.lodging(), b.restaurant()],
+                ),
+            ),
+        )
+        keys = archive.trip_keys()
+        assert len(keys) == 2
+        smaller, larger = sorted(
+            keys, key=lambda k: len(list(staged_children(archive, k)))
+        )
+        return smaller, larger
+
+    ####################################################################
+    #
+    def test_a_merged_trip_carries_both_halves(
+        self, archive: Archive, pair: tuple[str, str]
+    ) -> None:
+        """
+        GIVEN: two staged trips of one journey
+        WHEN:  one is declared as part of the other
+        THEN:  the target plans both halves as one trip
+
+        Uploading both would make two rival trips out of one journey, and
+        neither half is redundant: each holds that traveller's own
+        flights and room.
+        """
+        smaller, larger = pair
+        before = plan_trip(archive, larger).total
+        added = len(list(staged_children(archive, smaller)))
+
+        declare_merge(archive, smaller, larger)
+
+        check.equal(plan_trip(archive, larger).total, before + added)
+
+    ####################################################################
+    #
+    def test_a_merged_trip_is_numbered_as_one_journey(
+        self, archive: Archive, pair: tuple[str, str]
+    ) -> None:
+        """
+        GIVEN: a merged pair
+        WHEN:  the target is planned
+        THEN:  sort_order is one dense sequence over both halves
+
+        Numbering each half separately would give two objects the same
+        position and read as one traveller's trip followed by the other's.
+        """
+        smaller, larger = pair
+        declare_merge(archive, smaller, larger)
+
+        plan = plan_trip(archive, larger)
+
+        orders = [o.sort_order for o in plan.objects]
+        check.equal(orders, list(range(1, plan.total + 1)), "dense")
+        instants = [o.starts_at for o in plan.objects if o.starts_at]
+        check.equal(instants, sorted(instants), "and in time order")
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "wrong",
+        ["itself", "unstaged"],
+    )
+    def test_a_merge_that_makes_no_sense_is_refused(
+        self, archive: Archive, pair: tuple[str, str], wrong: str
+    ) -> None:
+        """
+        GIVEN: a merge naming one trip twice, or a trip that is not there
+        WHEN:  it is declared
+        THEN:  ValueError says so
+        """
+        smaller, larger = pair
+        absorbed = larger if wrong == "itself" else "txim-nothing-g01-dead"
+
+        with pytest.raises(ValueError):
+            declare_merge(archive, absorbed, larger)
+
+    ####################################################################
+    #
+    def test_merging_into_an_absorbed_trip_is_refused(
+        self, archive: Archive, pair: tuple[str, str]
+    ) -> None:
+        """
+        GIVEN: a trip already declared as part of another
+        WHEN:  a third is declared as part of *it*
+        THEN:  it is refused, naming where the objects actually go
+
+        A chain would silently drop the middle trip's objects, since the
+        uploader gathers one level.
+        """
+        smaller, larger = pair
+        declare_merge(archive, smaller, larger)
+
+        with pytest.raises(ValueError, match="itself merged into"):
+            declare_merge(archive, larger, smaller)
+
+    ####################################################################
+    #
+    def test_a_flight_is_labelled_by_its_ends_in_the_plan(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a flight, which carries no name
+        WHEN:  the trip is planned
+        THEN:  the plan calls it by its endpoints
+
+        Which is what the app will call it, and a blank row tells a
+        reader nothing before the one irreversible step.
+        """
+        stage_export(archive, b.export(b.trip(objects=[b.flight()])))
+        plan = plan_trip(archive, archive.trip_keys()[0])
+
+        check.equal(plan.objects[0].name, "SAN to OSA")

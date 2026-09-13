@@ -57,6 +57,10 @@ from tripsy_exim.sync.overrides import MODEL_FOR_COLLECTION
 #
 UPLOADED = "uploaded_trips"
 
+# Where one trip is recorded as uploading into another.
+#
+MERGED = "merged_trips"
+
 COLLECTION_ORDER: tuple[str, ...] = (
     "transportations",
     "hostings",
@@ -265,6 +269,77 @@ def numbered(objects: list[Child]) -> list[tuple[int, Child]]:
 
 ####################################################################
 #
+def merged_into(archive: Archive) -> dict[str, str]:
+    """
+    Which staged trips are to be uploaded as part of another.
+
+    One journey can reach the archive as two trips: the export records a
+    trip per traveller, so a holiday taken together arrives twice, each
+    copy holding that traveller's own flights and room and one of them
+    holding the itinerary they shared.  Neither is redundant and neither
+    is the whole thing.
+
+    Args:
+        archive: The archive to read.
+
+    Returns:
+        Absorbed trip key to the key it is absorbed into.
+    """
+    record = archive.read_manifest().get(MERGED) or {}
+    return {str(key): str(value) for key, value in record.items()}
+
+
+####################################################################
+#
+def absorbed_by(archive: Archive, trip_key: str) -> list[str]:
+    """The trips whose objects upload as part of this one."""
+    return sorted(
+        absorbed
+        for absorbed, target in merged_into(archive).items()
+        if target == trip_key
+    )
+
+
+####################################################################
+#
+def declare_merge(archive: Archive, absorbed: str, target: str) -> None:
+    """
+    Record that one staged trip uploads as part of another.
+
+    Nothing is moved on disk.  Both trips stay as the parser produced
+    them, which keeps staging lossless and the declaration reversible;
+    it is read at upload time and nowhere else.
+
+    Args:
+        archive: The archive to record in.
+        absorbed: Key of the trip that will not be created.
+        target: Key of the trip its objects join.
+
+    Raises:
+        ValueError: The two are the same trip, either is not staged, or
+            the target is itself absorbed -- a chain nobody intended.
+    """
+    if absorbed == target:
+        raise ValueError(f"{absorbed} cannot be merged into itself")
+    for key in (absorbed, target):
+        if staged_trip(archive, key) is None:
+            raise ValueError(f"{key} is not staged")
+
+    existing = merged_into(archive)
+    if target in existing:
+        raise ValueError(
+            f"{target} is itself merged into {existing[target]}; "
+            f"merge into that instead"
+        )
+
+    manifest: dict[str, Any] = archive.read_manifest()
+    record = manifest.setdefault(MERGED, {})
+    record[absorbed] = target
+    archive.write_manifest(manifest)
+
+
+####################################################################
+#
 def in_travel_order(archive: Archive, keys: list[str]) -> list[str]:
     """
     Put trip keys in the order the trips were travelled, oldest first.
@@ -392,14 +467,14 @@ def plan_trip(archive: Archive, trip_key: str) -> TripPlan:
         identifier=str(trip.internal_identifier or ""),
     )
 
-    children = list(staged_children(archive, trip_key))
+    children = list(_all_children(archive, trip_key))
     for order, obj in numbered(children):
         collection = _collection_of(obj)
         plan.objects.append(
             PlannedObject(
                 collection=collection,
                 identifier=str(obj.internal_identifier or ""),
-                name=str(obj.name or ""),
+                name=_label(obj),
                 sort_order=order,
                 starts_at=instant_of(obj),
                 type_value=_type_of(obj),
@@ -465,7 +540,7 @@ def upload_trip(
 
     _remember(archive, identifier, result.trip_id)
 
-    children = list(staged_children(archive, trip_key))
+    children = list(_all_children(archive, trip_key))
     for order, obj in numbered(children):
         collection = _collection_of(obj)
         payload = obj.writable_payload()
@@ -527,6 +602,54 @@ def child_ids_by_identifier(
         if key and obj.get("id") is not None:
             found[str(key)] = int(obj["id"])
     return found
+
+
+####################################################################
+#
+def _label(obj: Child) -> str:
+    """
+    What to call an object in a plan a person reads.
+
+    A flight carries no name -- the app titles one from its endpoints and
+    TripIt's own word for them all is "Flight" -- so the plan says what
+    the app will say rather than leaving the row blank.
+
+    Args:
+        obj: A staged child object.
+
+    Returns:
+        The object's name, or its endpoints, or an empty string.
+    """
+    name = str(obj.name or "")
+    if name or not isinstance(obj, Transportation):
+        return name
+
+    ends = [obj.departure_description, obj.arrival_description]
+    if any(ends):
+        return " to ".join(str(end or "?") for end in ends)
+    return ""
+
+
+####################################################################
+#
+def _all_children(archive: Archive, trip_key: str) -> Iterator[Child]:
+    """
+    Every object this trip uploads, its own and any it absorbs.
+
+    Numbering runs over the whole of it, so a merged journey reads as one
+    itinerary in time order rather than one traveller's followed by the
+    other's.
+
+    Args:
+        archive: The archive holding the staged trips.
+        trip_key: Key of the trip being uploaded.
+
+    Yields:
+        One object at a time.
+    """
+    yield from staged_children(archive, trip_key)
+    for absorbed in absorbed_by(archive, trip_key):
+        yield from staged_children(archive, absorbed)
 
 
 ####################################################################

@@ -45,7 +45,9 @@ from tripsy_exim.secrets import (
 from tripsy_exim.store import ARCHIVE_ENV, Archive, default_root
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
 from tripsy_exim.sync.importer import (
+    declare_merge,
     in_travel_order,
+    merged_into,
     plan_trip,
     resolve_trip_key,
     staged_trip,
@@ -462,9 +464,55 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
         name = str(getattr(trip, "name", "") or key)
         starts = getattr(trip, "starts_at", None)
         mark = "up" if key in done else "  "
+        if key in merged_into(archive):
+            mark = "->"
         click.echo(f"  {mark}  {str(starts or ''):10}  {name[:48]:48} {key}")
 
     click.echo(f"\n{shown} trips, {len(done)} already uploaded")
+
+
+####################################################################
+#
+@main.command("merge")
+@click.argument("absorbed")
+@click.argument("target")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+def merge_command(
+    absorbed: str, target: str, archive_root: Path | None
+) -> None:
+    """
+    Upload one staged trip as part of another.
+
+    One journey can reach the archive as two trips: the export records a
+    trip per traveller, so a holiday taken together arrives twice, each
+    copy holding that traveller's own flights and room.  Uploading both
+    makes two rival trips out of one journey.
+
+    Nothing moves on disk.  Both trips stay as the parser produced them,
+    so staging stays lossless and the declaration can be undone; it is
+    read when uploading and nowhere else.
+
+    Trips are named by key, not by name: the trips this is for share a
+    name, which is how they were found in the first place.
+    """
+    archive = staged_archive(archive_root)
+    try:
+        declare_merge(archive, absorbed, target)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    plan = plan_trip(archive, target)
+    click.echo(f"{absorbed}\n  uploads as part of\n{target}")
+    click.echo(f"\n{plan.name}: {plan.total} objects after the merge")
 
 
 ####################################################################
@@ -559,6 +607,13 @@ def upload_command(
     if not keys:
         raise click.ClickException(f"no staged trips in {archive_root}")
 
+    # A trip declared as part of another is not uploaded in its own
+    # right; its objects go up with the trip that absorbs it.
+    #
+    absorbed = merged_into(archive)
+    merged = [key for key in keys if key in absorbed]
+    keys = [key for key in keys if key not in absorbed]
+
     keys = in_travel_order(archive, keys)
 
     done = uploaded_trips(archive)
@@ -601,6 +656,8 @@ def upload_command(
     )
     if skipped:
         click.echo(f"{skipped} trips skipped, already uploaded")
+    if merged:
+        click.echo(f"{len(merged)} trips merged into another and not created")
 
     # Two staged trips sharing a name and a date range are either one
     # journey recorded twice or one journey recorded per traveller.  A
@@ -610,7 +667,9 @@ def upload_command(
     planned = {plan.trip_key for plan in plans}
     index = archive.read_manifest().get(TRIP_INDEX) or {}
     for join_key, shared_keys in sorted(index.items()):
-        shared = [key for key in shared_keys if key in planned]
+        shared = [
+            key for key in shared_keys if key in planned and key not in absorbed
+        ]
         if len(shared) > 1:
             click.echo(f"\n  NOTE: {len(shared)} trips share one key:")
             click.echo(f"      {join_key}")
