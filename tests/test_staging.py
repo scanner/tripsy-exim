@@ -499,3 +499,82 @@ class TestTheExportIsAuthoritative:
         A missing key must never be treated as a wildcard.
         """
         assert archived_trips(Archive(tmp_path), None) == []
+
+
+########################################################################
+########################################################################
+#
+class TestRestaging:
+    """Tests that staging reflects the parse rather than accumulating."""
+
+    ####################################################################
+    #
+    def test_an_object_no_longer_produced_is_removed(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a staged trip, and a stale object beside its objects
+        WHEN:  the same source is staged again
+        THEN:  the stale object is gone
+
+        The uploader reads the directory rather than the parser, so an
+        object a rule stopped producing would be posted anyway and its
+        identifier spent -- and identifiers are never released.
+        """
+        document = tripit_builder.export(
+            tripit_builder.trip(
+                objects=[tripit_builder.flight(), tripit_builder.lodging()]
+            )
+        )
+        staged = stage_export(archive, document)[0]
+
+        stale = (
+            archive.trip_dir(staged.trip_key)
+            / "activities"
+            / "txim-tripit-json-g01-staleobject.json"
+        )
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text('{"data": {}, "kind": "Activity"}')
+
+        stage_export(archive, document)
+
+        check.is_false(stale.exists(), "the stale object is gone")
+        check.is_true(
+            any(
+                (archive.trip_dir(staged.trip_key) / "hostings").glob("*.json")
+            ),
+            "and what the parse produced remains",
+        )
+
+    ####################################################################
+    #
+    def test_restaging_an_unchanged_export_is_a_no_op(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a staged trip
+        WHEN:  the same source is staged again
+        THEN:  the same files are there, none rewritten
+
+        Objects are derived from their source, so an unchanged export
+        reproduces every byte; rewriting would churn a synced archive.
+        """
+        document = tripit_builder.export(
+            tripit_builder.trip(
+                objects=[tripit_builder.flight(), tripit_builder.lodging()]
+            )
+        )
+        staged = stage_export(archive, document)[0]
+        before = {
+            path: path.stat().st_mtime_ns
+            for path in archive.trip_dir(staged.trip_key).rglob("*.json")
+        }
+
+        stage_export(archive, document)
+
+        after = {
+            path: path.stat().st_mtime_ns
+            for path in archive.trip_dir(staged.trip_key).rglob("*.json")
+        }
+        check.equal(set(after), set(before), "the same files")
+        check.equal(after, before, "none of them rewritten")

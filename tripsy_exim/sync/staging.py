@@ -142,9 +142,11 @@ def stage(archive: Archive, parsed: ParsedCalendar) -> StagedTrip:
         ("activities", parsed.activities),
         ("transportations", parsed.transportations),
     ):
+        written = set()
         for obj in objects:
-            archive.write(obj, trip_key)
+            written.add(archive.write(obj, trip_key).name)
         counts[name] = len(objects)
+        _prune(archive.trip_dir(trip_key) / name, written)
 
     _record_join_key(archive, parsed, trip_key)
     report_path = _write_report(archive, trip_key, parsed)
@@ -219,6 +221,41 @@ def archived_trips(archive: Archive, join_key: str | None) -> list[str]:
     index = archive.read_manifest().get(TRIP_INDEX) or {}
     found: list[str] = index.get(join_key) or []
     return [key for key in found if not is_scratch(key)]
+
+
+####################################################################
+#
+def _prune(directory: Path, keep: set[str]) -> list[Path]:
+    """
+    Remove objects a re-parse of the same source no longer produces.
+
+    Staging writes what the parser produced; without this it would only
+    ever add.  A rule that stops producing something -- a record now
+    recognised as a map pin, say -- would leave the object it used to
+    make sitting in the archive, and the uploader reads the directory
+    rather than the parser, so it would be posted anyway and its
+    identifier spent.
+
+    Safe because a trip directory holds only what one parse produced.
+    Corrections live in `overrides/` outside `trips/`, so nothing a
+    person wrote is in here to lose.
+
+    Args:
+        directory: One collection of one trip.
+        keep: Filenames this parse wrote.
+
+    Returns:
+        The paths removed.
+    """
+    if not directory.is_dir():
+        return []
+
+    removed = []
+    for path in sorted(directory.glob("*.json")):
+        if path.name not in keep:
+            path.unlink()
+            removed.append(path)
+    return removed
 
 
 ####################################################################
