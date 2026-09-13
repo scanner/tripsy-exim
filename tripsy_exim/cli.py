@@ -513,6 +513,11 @@ def merge_command(
     plan = plan_trip(archive, target)
     click.echo(f"{absorbed}\n  uploads as part of\n{target}")
     click.echo(f"\n{plan.name}: {plan.total} objects after the merge")
+    if plan.duplicates:
+        click.echo(
+            f"  {plan.duplicates} objects the target already held, not sent "
+            f"again"
+        )
 
 
 ####################################################################

@@ -152,6 +152,10 @@ class TripPlan:
     identifier: str
     objects: list[PlannedObject] = field(default_factory=list)
 
+    # Objects an absorbed trip holds that this one already has.
+    #
+    duplicates: int = 0
+
     ####################################################################
     #
     @property
@@ -467,7 +471,7 @@ def plan_trip(archive: Archive, trip_key: str) -> TripPlan:
         identifier=str(trip.internal_identifier or ""),
     )
 
-    children = list(_all_children(archive, trip_key))
+    children, plan.duplicates = _all_children(archive, trip_key)
     for order, obj in numbered(children):
         collection = _collection_of(obj)
         plan.objects.append(
@@ -540,7 +544,7 @@ def upload_trip(
 
     _remember(archive, identifier, result.trip_id)
 
-    children = list(_all_children(archive, trip_key))
+    children, _ = _all_children(archive, trip_key)
     for order, obj in numbered(children):
         collection = _collection_of(obj)
         payload = obj.writable_payload()
@@ -632,7 +636,7 @@ def _label(obj: Child) -> str:
 
 ####################################################################
 #
-def _all_children(archive: Archive, trip_key: str) -> Iterator[Child]:
+def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
     """
     Every object this trip uploads, its own and any it absorbs.
 
@@ -640,16 +644,57 @@ def _all_children(archive: Archive, trip_key: str) -> Iterator[Child]:
     itinerary in time order rather than one traveller's followed by the
     other's.
 
+    An absorbed trip can hold the same object as the trip absorbing it --
+    two travellers on one flight each carry that flight -- so an object
+    the target already has is left out.  Identifiers cannot catch this:
+    they are derived per trip, so the same flight in two records mints
+    two of them and both would be created.
+
     Args:
         archive: The archive holding the staged trips.
         trip_key: Key of the trip being uploaded.
 
-    Yields:
-        One object at a time.
+    Returns:
+        The objects to upload, and how many duplicates were left out.
     """
-    yield from staged_children(archive, trip_key)
+    objects = list(staged_children(archive, trip_key))
+    seen = {_fingerprint(obj) for obj in objects}
+
+    duplicates = 0
     for absorbed in absorbed_by(archive, trip_key):
-        yield from staged_children(archive, absorbed)
+        for obj in staged_children(archive, absorbed):
+            mark = _fingerprint(obj)
+            if mark in seen:
+                duplicates += 1
+                continue
+            seen.add(mark)
+            objects.append(obj)
+    return objects, duplicates
+
+
+####################################################################
+#
+def _fingerprint(obj: Child) -> tuple[str, str, str]:
+    """
+    What makes two staged objects the same thing.
+
+    Kind, instant and label: a flight two travellers were both on is one
+    flight, and a trip should carry it once.  Two rooms in one hotel are
+    not caught by this, and should not be -- they differ by the minute
+    each was booked for, which is what tells them apart.
+
+    Args:
+        obj: A staged child object.
+
+    Returns:
+        A value equal for two objects describing the same thing.
+    """
+    when = instant_of(obj)
+    return (
+        type(obj).__name__,
+        when.isoformat() if when else "",
+        _label(obj),
+    )
 
 
 ####################################################################

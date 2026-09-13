@@ -413,7 +413,9 @@ class TestMerge:
 
         declare_merge(archive, smaller, larger)
 
-        check.equal(plan_trip(archive, larger).total, before + added)
+        plan = plan_trip(archive, larger)
+        check.equal(plan.total + plan.duplicates, before + added, "all of it")
+        check.greater(plan.total, before, "and more than either half alone")
 
     ####################################################################
     #
@@ -494,3 +496,44 @@ class TestMerge:
         plan = plan_trip(archive, archive.trip_keys()[0])
 
         check.equal(plan.objects[0].name, "SAN to OSA")
+
+    ####################################################################
+    #
+    def test_an_object_the_target_already_has_is_not_sent_twice(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: two trips of one journey that share a flight
+        WHEN:  one is merged into the other
+        THEN:  the shared flight is planned once, and counted as skipped
+
+        Two travellers on one flight each carry that flight in their own
+        record.  Identifiers cannot catch it: they are derived per trip,
+        so the same flight in two records mints two of them and both
+        would be created.
+        """
+        shared = b.flight()
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="Burlington, VT, September 2010",
+                    objects=[shared, b.restaurant()],
+                ),
+                b.trip(
+                    name="Burlington, VT, September 2010",
+                    objects=[shared],
+                ),
+            ),
+        )
+        keys = archive.trip_keys()
+        smaller, larger = sorted(
+            keys, key=lambda k: len(list(staged_children(archive, k)))
+        )
+
+        declare_merge(archive, smaller, larger)
+        plan = plan_trip(archive, larger)
+
+        check.equal(plan.duplicates, 1, "the shared flight was skipped")
+        flights = [o for o in plan.objects if o.collection == "transportations"]
+        check.equal(len(flights), 1, "and planned once")
