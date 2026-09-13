@@ -245,6 +245,35 @@ def classify(obj: dict[str, Any]) -> tuple[str, str | None, bool, str]:
 
 ####################################################################
 #
+def _is_fragment(source: dict[str, Any]) -> bool:
+    """
+    Whether a transport segment describes no journey at all.
+
+    A leg has to happen somewhere or at some time; one naming neither is
+    a fragment of its booking rather than a part of the travel.
+
+    Args:
+        source: One segment of a transport record.
+
+    Returns:
+        Whether the segment names neither a time nor a place.
+    """
+    timed = bool((source.get("StartDateTime") or {}).get("time"))
+    placed = any(
+        key in source
+        for key in (
+            "start_airport_code",
+            "start_station_name",
+            "StartStationAddress",
+            "StartLocationAddress",
+            "StartAddress",
+        )
+    )
+    return not timed and not placed
+
+
+####################################################################
+#
 def _is_map(obj: dict[str, Any]) -> bool:
     """
     Whether a record is one of TripIt's map pins.
@@ -402,6 +431,27 @@ def _parse_object(
     #
     legs: list[dict[str, Any]] = segments if segments else [obj]
     for index, source in enumerate(legs):
+        if segments and _is_fragment(source):
+            # A booking can carry a segment that is not a journey: no
+            # route, no times, only a seat already recorded on the leg it
+            # belongs to.  Two of the corpus's 540 segments are these,
+            # and both duplicate a seat the real leg already holds.
+            #
+            parsed.notes.append(
+                EventNote(
+                    uid=_token((trip_token, kind, name, str(index)), within),
+                    identifier="",
+                    kind=SKIPPED,
+                    summary=f"{name} (segment {index})",
+                    confident=True,
+                    reason="transport segment naming neither a time nor a "
+                    "place",
+                    timezone=None,
+                    timezone_source="none",
+                )
+            )
+            continue
+
         starts, start_zone, all_day = _instant(
             source.get("StartDateTime") or source.get("DateTime")
         )
