@@ -76,21 +76,30 @@ _GENERAL = "general"
 _RESTAURANT = "restaurant"
 _TOUR_TYPE = "tour"
 
-# Read off the app's own picker on 2026-09-12, the same way: 'airplane',
-# 'car', 'roadtrip', 'subway', 'train', 'transfer', 'walk'.  A ferry has
-# no observed value yet, so those records stay untyped.
+# Read off the app itself on 2026-09-12, by building one of each and
+# reading the value back: 'airplane', 'bus', 'car', 'cruise', 'ferry',
+# 'roadtrip', 'subway', 'train', 'transfer', 'walk'.
+#
+# Tripsy's own MCP server documents the set as airplane, bike, bus, car,
+# roadtrip, cruise, ferry, motorcycle, train, walk -- which omits both
+# 'subway' and 'transfer', and the app writes those, so the published
+# list is not the whole of it.
 #
 _TRAIN = "train"
 _CAR = "car"
 _TRANSFER = "transfer"
 _FERRY_TYPE = "ferry"
+_ROADTRIP = "roadtrip"
 
 # How TripIt names and shapes a map pin.  Observed across 66 of them in
 # a real export, all alike.
 #
 _MAP_PREFIX = "Map of "
 _MAP_SHAPE = frozenset({"Address", "DateTime", "display_name"})
-_ROADTRIP = "roadtrip"
+
+# What TripIt calls every flight, which is nothing a person chose.
+#
+_TRIPIT_FLIGHT = "Flight"
 
 # Keys consumed off a trip record.  Everything else is retained.
 #
@@ -477,6 +486,13 @@ def _build(
     """
     extras = _unread(obj, source)
     name = str(obj.get("display_name") or "") or None
+
+    # A flight titles itself from its endpoints, and Tripsy's own
+    # guidance says to leave the name off unless a person chose one.
+    # TripIt's is the word "Flight" on all 259 of them.
+    #
+    if type_value == "airplane" and name == _TRIPIT_FLIGHT:
+        name = None
     notes = obj.get("notes") or obj.get("text") or None
 
     if kind == HOSTING:
@@ -517,6 +533,8 @@ def _build(
             departure_longitude=_number(source.get("start_airport_longitude")),
             arrival_latitude=_number(source.get("end_airport_latitude")),
             arrival_longitude=_number(source.get("end_airport_longitude")),
+            departure_description=_endpoint_label(source, "start"),
+            arrival_description=_endpoint_label(source, "end"),
             departure_terminal=source.get("start_terminal") or None,
             arrival_terminal=source.get("end_terminal") or None,
             departure_gate=source.get("start_gate") or None,
@@ -782,6 +800,35 @@ def _arrival_address(source: dict[str, Any], obj: dict[str, Any]) -> str | None:
         or source.get("end_station_name")
         or None
     )
+
+
+####################################################################
+#
+def _endpoint_label(source: dict[str, Any], end: str) -> str | None:
+    """
+    What one end of a leg is called, as against where it is.
+
+    The app titles a leg from these, so an airport wants its IATA code
+    rather than its full name -- Tripsy's own guidance asks for the code
+    outright.  A station or a stop has no code, so it gives its name.
+    The address is a separate field and stays the address.
+
+    Args:
+        source: The segment, or the record when there are no segments.
+        end: 'start' or 'end'.
+
+    Returns:
+        A short label for that end, or None when the source names none.
+    """
+    for key in (
+        f"{end}_airport_code",
+        f"{end}_station_name",
+        f"{end}_location_name",
+    ):
+        value = source.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 ####################################################################

@@ -200,6 +200,46 @@ class TestClassify:
 
     ####################################################################
     #
+    def test_a_flight_labels_its_ends_with_their_codes(self) -> None:
+        """
+        GIVEN: a flight segment carrying airport codes
+        WHEN:  it is parsed
+        THEN:  the codes become the endpoint descriptions, and the name
+               is dropped
+
+        The app titles a leg '<departure> to <arrival>' from these, so a
+        leg without them reads as ' to '.  TripIt calls every flight
+        'Flight', which is not a name anybody chose.
+        """
+        parsed = only(b.export(b.trip(objects=[b.flight()])))
+        leg = parsed.transportations[0]
+
+        check.equal(leg.departure_description, "SAN", "departure code")
+        check.equal(leg.arrival_description, "OSA", "arrival code")
+        check.is_none(leg.name, "TripIt's generic name dropped")
+        check.is_in(
+            "Airport", str(leg.departure_address), "address still the place"
+        )
+
+    ####################################################################
+    #
+    def test_a_rail_leg_labels_its_ends_with_the_stations(self) -> None:
+        """
+        GIVEN: a rail segment naming its stations
+        WHEN:  it is parsed
+        THEN:  the station names become the endpoint descriptions
+
+        A station has no code to use instead, and the name it is known
+        by is what belongs on the row.
+        """
+        parsed = only(b.export(b.trip(objects=[b.rail()])))
+        leg = parsed.transportations[0]
+
+        check.is_in("Shin-Osaka", str(leg.departure_description))
+        check.is_in("Okayama", str(leg.arrival_description))
+
+    ####################################################################
+    #
     def test_rail_is_recognised_without_a_train_number(self) -> None:
         """
         GIVEN: a rail record carrying no train number, as most do
