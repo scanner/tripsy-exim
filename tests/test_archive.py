@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 # 3rd party imports
@@ -16,7 +17,12 @@ from faker import Faker
 
 # Project imports
 from tripsy_exim.models import Activity, Collaborator, Expense, Hosting, Trip
-from tripsy_exim.store import ARCHIVE_SCHEMA_VERSION, Archive, local_key
+from tripsy_exim.store import (
+    ARCHIVE_SCHEMA_VERSION,
+    Archive,
+    local_key,
+    write_json,
+)
 
 
 ########################################################################
@@ -360,6 +366,76 @@ class TestArchiveWrites:
         """
         with pytest.raises(ValueError, match="trip_key"):
             archive.write(hosting)
+
+
+########################################################################
+########################################################################
+#
+class TestUnchangedWrites:
+    """Tests that a write changing nothing does not touch the file."""
+
+    ####################################################################
+    #
+    def test_writing_the_same_document_leaves_the_file_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        GIVEN: a file already holding exactly this document
+        WHEN:  it is written again
+        THEN:  nothing is written and the file is not touched
+
+        Objects here are derived from their source, so re-parsing an
+        unchanged export reproduces every byte.  Rewriting is invisible
+        on disk and loud everywhere else: a synced archive uploads every
+        file again, and a versioned one keeps a revision of each.
+        """
+        path = tmp_path / "thing.json"
+        write_json(path, {"a": 1, "b": [2, 3]})
+        before = path.stat().st_mtime_ns
+
+        wrote = write_json(path, {"a": 1, "b": [2, 3]})
+
+        check.is_false(wrote, "reported as not written")
+        check.equal(path.stat().st_mtime_ns, before, "file untouched")
+
+    ####################################################################
+    #
+    def test_a_changed_document_is_written(self, tmp_path: Path) -> None:
+        """
+        GIVEN: a file holding an earlier version of a document
+        WHEN:  a different one is written
+        THEN:  it is written, and the file holds the new version
+        """
+        path = tmp_path / "thing.json"
+        write_json(path, {"a": 1})
+
+        wrote = write_json(path, {"a": 2})
+
+        check.is_true(wrote, "reported as written")
+        check.equal(json.loads(path.read_text()), {"a": 2})
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "document",
+        [{"a": 1}, {"name": "Okayama Station"}, {"nested": {"b": [1, 2]}}],
+        ids=["scalar", "text", "nested"],
+    )
+    def test_a_first_write_always_happens(
+        self, tmp_path: Path, document: dict[str, Any]
+    ) -> None:
+        """
+        GIVEN: no file there yet
+        WHEN:  a document is written
+        THEN:  it is written
+
+        A file that cannot be read is one that has to be written, and an
+        absent one is the ordinary case of that.
+        """
+        path = tmp_path / "new.json"
+
+        check.is_true(write_json(path, document))
+        check.equal(json.loads(path.read_text()), document)
 
 
 ########################################################################

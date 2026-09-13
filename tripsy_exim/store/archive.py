@@ -477,13 +477,44 @@ class Archive:
 
 ####################################################################
 #
-def write_json(path: Path, document: dict[str, Any]) -> None:
-    """Write JSON through a temporary file and an atomic rename."""
+def write_json(path: Path, document: dict[str, Any]) -> bool:
+    """
+    Write JSON, unless the file already holds exactly this.
+
+    Every object here is derived from its source, so re-parsing an
+    unchanged export produces the same bytes: staging a whole account
+    twice rewrote all two thousand files identically.  Rewriting is
+    invisible on disk and loud everywhere else -- a synced archive
+    uploads every file again, and a versioned one keeps a revision of
+    each -- so a write that would change nothing is skipped.
+
+    The write itself goes through a temporary file and a rename, so an
+    interrupted run leaves the previous version rather than a truncated
+    one.
+
+    Args:
+        path: The file to write.
+        document: The JSON-ready document.
+
+    Returns:
+        Whether anything was written.
+    """
+    payload = (
+        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False)
+        + "\n"
+    ).encode("utf-8")
+
+    # A file that cannot be read is one that has to be written: absent,
+    # unreadable, or holding something else all reach the same answer.
+    #
+    try:
+        if path.read_bytes() == payload:
+            return False
+    except OSError:
+        pass
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(
-        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False)
-        + "\n",
-        encoding="utf-8",
-    )
+    tmp.write_bytes(payload)
     tmp.replace(path)
+    return True
