@@ -593,3 +593,33 @@ class TestArchiveResolution:
 
         check.not_equal(result.exit_code, 0)
         check.is_in("nowhere", result.output)
+
+    ####################################################################
+    #
+    def test_an_unreadable_archive_is_reported_not_raised(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        GIVEN: an archive directory that cannot be read
+        WHEN:  a command that reads the archive runs
+        THEN:  it says so rather than raising out of a directory walk
+
+        macOS refuses a folder under Documents to a process it has not
+        been told to trust, and a scheduled run has nobody to ask.
+        """
+        root = tmp_path / "locked"
+        (root / "trips").mkdir(parents=True)
+        (root / "trips").chmod(0o000)
+        monkeypatch.setenv(ARCHIVE_ENV, str(root))
+
+        try:
+            result = runner.invoke(main, ["list"])
+        finally:
+            (root / "trips").chmod(0o755)
+
+        check.not_equal(result.exit_code, 0)
+        check.is_in("cannot read the archive", result.output)
+        check.is_not_instance(result.exception, OSError, "reported, not raised")

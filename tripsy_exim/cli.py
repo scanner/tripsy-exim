@@ -229,7 +229,21 @@ def staged_archive(archive_root: Path | None) -> Archive:
     root = archive_for(archive_root)
     if not root.is_dir():
         raise click.ClickException(f"no archive directory at {root}")
-    return Archive(root)
+
+    # Being able to name a directory is not being able to read it.  On
+    # macOS a folder under Documents or Desktop is refused to a process
+    # the system has not been told to trust, and a scheduled run has no
+    # one to ask, so the refusal is reported rather than raised as a
+    # stack trace from inside a directory walk.
+    #
+    archive = Archive(root)
+    try:
+        archive.trip_keys()
+    except OSError as exc:
+        raise click.ClickException(
+            f"cannot read the archive at {root}: {exc.strerror or exc}"
+        ) from exc
+    return archive
 
 
 ####################################################################
