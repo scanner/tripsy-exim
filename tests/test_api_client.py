@@ -1141,3 +1141,102 @@ class TestTimeouts:
 
             check.equal(client.pacer.throttles, 1, "the 429 counted")
             check.equal(client.pacer.failures, 0, "nothing failed outright")
+
+
+########################################################################
+########################################################################
+#
+class TestReauthentication:
+    """Tests for replacing a token a request was refused for."""
+
+    ####################################################################
+    #
+    def test_a_refused_token_is_replaced_and_the_request_retried(
+        self,
+    ) -> None:
+        """
+        GIVEN: a client holding a spent token and a way to get another
+        WHEN:  a request is refused as unauthenticated
+        THEN:  a fresh token is fetched and the request succeeds
+
+        A cached token has no stated lifetime, so being refused is the
+        only way to learn it is spent.
+        """
+        seen: list[str] = []
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            header = request.headers.get("Authorization", "")
+            seen.append(header)
+            if header == "Token stale":
+                return httpx.Response(401, json={"detail": "Invalid token."})
+            return httpx.Response(200, json={"results": [], "count": 0})
+
+        with TripsyClient(
+            base_url=BASE,
+            transport=httpx.MockTransport(answer),
+            token="stale",
+            reauthenticate=lambda: "fresh",
+            retries=RetryPolicy(jitter=0.0),
+        ) as client:
+            client.list_trips_v1()
+
+        check.equal(seen, ["Token stale", "Token fresh"], "replaced once")
+
+    ####################################################################
+    #
+    def test_a_second_refusal_is_raised_rather_than_looped(self) -> None:
+        """
+        GIVEN: a replacement token that is refused too
+        WHEN:  a request is made
+        THEN:  the refusal is raised after exactly one replacement
+
+        A second refusal is about the credentials rather than the token,
+        so retrying it would be an unbounded loop against the API.
+        """
+        attempts = 0
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(401, json={"detail": "Invalid token."})
+
+        with TripsyClient(
+            base_url=BASE,
+            transport=httpx.MockTransport(refuse),
+            token="stale",
+            reauthenticate=lambda: "fresh",
+            retries=RetryPolicy(jitter=0.0),
+        ) as client:
+            with pytest.raises(AuthenticationError):
+                client.list_trips_v1()
+
+        check.equal(attempts, 2, "the original and one replacement")
+
+    ####################################################################
+    #
+    def test_without_a_hook_a_refusal_is_raised_at_once(self) -> None:
+        """
+        GIVEN: a client with no way to get another token
+        WHEN:  a request is refused as unauthenticated
+        THEN:  it is raised without a second attempt
+
+        Which is right for a token given on the command line: there is
+        nowhere to get a replacement from.
+        """
+        attempts = 0
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(401, json={"detail": "Invalid token."})
+
+        with TripsyClient(
+            base_url=BASE,
+            transport=httpx.MockTransport(refuse),
+            token="stale",
+            retries=RetryPolicy(jitter=0.0),
+        ) as client:
+            with pytest.raises(AuthenticationError):
+                client.list_trips_v1()
+
+        check.equal(attempts, 1, "no replacement was attempted")

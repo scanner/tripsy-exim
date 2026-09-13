@@ -14,8 +14,9 @@ memory for the run.
 
 # system imports
 import os
-import subprocess
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 # 3rd party imports
@@ -24,8 +25,23 @@ from dotenv import load_dotenv
 
 # Project imports
 from tripsy_exim import __version__
-from tripsy_exim.api import IMPORT, INTERACTIVE, TokenAuth, TripsyClient
+from tripsy_exim.api import (
+    IMPORT,
+    INTERACTIVE,
+    PacingProfile,
+    TokenAuth,
+    TripsyClient,
+)
 from tripsy_exim.models import scratch_namespace
+from tripsy_exim.secrets import (
+    PASSWORD,
+    SECRET_URL_ENV,
+    TOKEN,
+    USERNAME,
+    SecretError,
+    SecretStore,
+    store_for,
+)
 from tripsy_exim.store import ARCHIVE_ENV, Archive, default_root
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
 from tripsy_exim.sync.importer import (
@@ -52,62 +68,28 @@ def main() -> None:
 # Credentials
 #
 # Resolved here and nowhere else.  Nothing below this module reads the
-# environment, runs `op`, or holds a password: the token from POST /auth
-# is handed to the client and lives in memory for the run.
+# environment, runs a secret store, or holds a password: the token from
+# POST /auth is handed to the client and lives in memory for the run.
 #
-
-
-####################################################################
-#
-def op_read(url: str, field: str) -> str:
-    """
-    Read one field of a 1Password item.
-
-    The binary is named rather than found, because more than one `op` can
-    be on a PATH and only the one the desktop app authorised can reach an
-    account.  `TRIPSY_OP_BIN` points at it when the first on the PATH is
-    the wrong one.
-
-    Args:
-        url: An `op://vault/item` URL, without a field.
-        field: The field to read.
-
-    Returns:
-        The field's value.
-
-    Raises:
-        click.ClickException: `op` could not answer, with its own words.
-    """
-    binary = os.environ.get("TRIPSY_OP_BIN", "op")
-    result = subprocess.run(
-        [binary, "read", f"{url.rstrip('/')}/{field}"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise click.ClickException(
-            f"{binary} read {url}/{field} failed: "
-            f"{result.stderr.strip() or 'no output'}"
-        )
-    return result.stdout.strip()
 
 
 ####################################################################
 #
 def resolve_credentials(
-    username: str | None, password: str | None
+    username: str | None, password: str | None, store: SecretStore | None
 ) -> tuple[str, str]:
     """
     Settle which credentials a run authenticates with.
 
     First match wins: a command line flag, then the environment, then
-    `.env`, then 1Password.  The 1Password form keeps a plaintext
-    password out of the environment entirely, which is what a scheduled
-    run wants.
+    `.env`, then the secret store.  The store is last because it is the
+    one that keeps a plaintext password out of the environment entirely,
+    so anything more explicit is a deliberate override of it.
 
     Args:
         username: Username given on the command line, or None.
         password: Password given on the command line, or None.
+        store: The configured secret store, or None.
 
     Returns:
         The username and password to authenticate with.
@@ -122,36 +104,83 @@ def resolve_credentials(
     if username and password:
         return username, password
 
-    url = os.environ.get("TRIPSY_ONEPASSWORD_URL")
-    if url:
-        return (
-            username or op_read(url, "username"),
-            password or op_read(url, "password"),
-        )
+    if store is not None:
+        username = username or store.get(USERNAME)
+        password = password or store.get(PASSWORD)
+        if username and password:
+            return username, password
 
     raise click.ClickException(
-        "no credentials: pass --username/--password, set "
-        "TRIPSY_USERNAME and TRIPSY_PASSWORD, or point "
-        "TRIPSY_ONEPASSWORD_URL at an op:// item"
+        "no credentials: pass --username/--password, set TRIPSY_USERNAME "
+        f"and TRIPSY_PASSWORD, or point {SECRET_URL_ENV} at a record "
+        "holding them"
     )
 
 
 ####################################################################
 #
-def authenticate(username: str | None, password: str | None) -> str:
+@contextmanager
+def open_session(
+    username: str | None,
+    password: str | None,
+    profile: PacingProfile = IMPORT,
+) -> Iterator[TripsyClient]:
     """
-    Trade resolved credentials for an API token.
+    Yield a client authenticated however this run can manage it.
+
+    A store that can write caches the token beside the password, so a run
+    that follows a successful one sends no credentials at all.  The token
+    has no stated lifetime -- these are DRF tokens, which are not
+    documented to expire -- so the only way to learn a cached one is spent
+    is to be refused, and that refusal is what replaces it.
 
     Args:
         username: Username given on the command line, or None.
         password: Password given on the command line, or None.
+        profile: Pacing profile for the run.
 
-    Returns:
-        The token, which the caller passes to its own client.
+    Yields:
+        A client carrying a token, which re-authenticates once if that
+        token turns out to be spent.
     """
-    name, secret = resolve_credentials(username, password)
-    with TripsyClient(profile=INTERACTIVE) as client:
-        return client.login(name, secret)
+    try:
+        store = store_for()
+    except SecretError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    ####################################################################
+    #
+    def fresh() -> str:
+        """Trade credentials for a token, caching it where possible."""
+        name, secret = resolve_credentials(username, password, store)
+        with TripsyClient(profile=INTERACTIVE) as session:
+            token = session.login(name, secret)
+        if store is not None and store.writable:
+            try:
+                store.put(TOKEN, token)
+            except SecretError as exc:
+                # Not fatal: the run has a token and only the saving of a
+                # request next time is lost.
+                #
+                click.echo(f"could not cache the token: {exc}", err=True)
+        return token
+
+    cached = None
+    if store is not None:
+        try:
+            cached = store.get(TOKEN)
+        except SecretError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    client = TripsyClient(
+        profile=profile,
+        auth=TokenAuth(cached or fresh()),
+        reauthenticate=fresh,
+    )
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 ####################################################################
@@ -529,10 +558,9 @@ def upload_command(
         click.echo("\nDry run.  Nothing was sent.  Pass --write to upload.")
         return
 
-    token = authenticate(username, password)
     created = existing = 0
     failures: list[str] = []
-    with TripsyClient(profile=IMPORT, auth=TokenAuth(token)) as client:
+    with open_session(username, password) as client:
         for plan in plans:
             result = upload_trip(client, archive, plan.trip_key)
             created += result.created
