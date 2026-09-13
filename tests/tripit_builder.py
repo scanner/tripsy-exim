@@ -259,6 +259,8 @@ def untyped_transport(
                 "EndDateTime": moment(day, "11:20:00"),
                 "StartLocationAddress": {"address": "Lower Station"},
                 "EndLocationAddress": {"address": "Upper Station"},
+                "start_location_name": "Lower Station",
+                "end_location_name": "Upper Station",
                 "carrier_name": carrier,
             }
         ],

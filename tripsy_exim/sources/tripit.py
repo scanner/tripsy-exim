@@ -97,9 +97,52 @@ _ROADTRIP = "roadtrip"
 _MAP_PREFIX = "Map of "
 _MAP_SHAPE = frozenset({"Address", "DateTime", "display_name"})
 
-# What TripIt calls every flight, which is nothing a person chose.
+# What TripIt calls a journey when it has nothing to call it.  These are
+# replaced by the endpoints, which say more.
 #
 _TRIPIT_FLIGHT = "Flight"
+_GENERIC_NAMES = frozenset(
+    {
+        "Flight",
+        "Rail",
+        "Train",
+        "Transportation",
+        "Ground Transportation",
+        "Ferry",
+    }
+)
+
+# Modes Tripsy has no type for.  The leg is filed as rail -- both run on
+# a fixed guideway between two stations -- and the mode goes in the name,
+# where the app shows it.  Swapping the type for a real one later leaves
+# the name still true.
+#
+_MODE_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("ropeway", "Ropeway"),
+    ("cable car", "Funicular"),
+)
+
+# Carriers the export names but does not type.  Matched on the carrier,
+# which is a field rather than a title somebody wrote, and listed as
+# substrings because one operator runs several services.  Every one was
+# read off a real export; nothing here is a guess about what might exist.
+#
+_CARRIER_TYPES: tuple[tuple[str, str], ...] = (
+    ("ropeway", _TRAIN),
+    ("cable car", _TRAIN),
+    ("cruise", "cruise"),
+    ("ferry", _FERRY_TYPE),
+    ("bus", "bus"),
+    ("shuttle", "bus"),
+    ("express", _TRAIN),
+    ("line", _TRAIN),
+)
+
+# Types whose endpoints are stations, stops, terminals or piers.  Tripsy
+# calls that category publicTransport, and sets it on the endpoints of
+# the legs its own app creates.
+#
+_PUBLIC_TRANSPORT = frozenset({_TRAIN, "subway", "bus", _FERRY_TYPE, "cruise"})
 
 # Keys consumed off a trip record.  Everything else is retained.
 #
@@ -504,6 +547,111 @@ def _parse_object(
 
 ####################################################################
 #
+def _carrier_of(source: dict[str, Any], obj: dict[str, Any]) -> str:
+    """Who runs this leg, however the record names them."""
+    return str(
+        source.get("carrier_name")
+        or obj.get("supplier_name")
+        or source.get("marketing_airline")
+        or ""
+    )
+
+
+####################################################################
+#
+def _type_from_carrier(carrier: str) -> str | None:
+    """
+    Work out a leg's type from who runs it.
+
+    The shape settles most of the corpus; what is left is a cable car, a
+    lake cruise, a city bus -- journeys the export records without ever
+    saying what they are.  The operator's name is the only thing that
+    does say, and it is a field of its own rather than a title somebody
+    typed, so it is read here and nowhere else.
+
+    Args:
+        carrier: The operator's name.
+
+    Returns:
+        A Tripsy type, or None when the name settles nothing.
+    """
+    lowered = carrier.lower()
+    for needle, value in _CARRIER_TYPES:
+        if needle in lowered:
+            return value
+    return None
+
+
+####################################################################
+#
+def _mode_prefix(carrier: str) -> str:
+    """
+    The mode to put in a leg's name, for modes Tripsy cannot draw.
+
+    Args:
+        carrier: The operator's name.
+
+    Returns:
+        'Ropeway', 'Funicular', or an empty string.
+    """
+    lowered = carrier.lower()
+    for needle, mode in _MODE_PREFIXES:
+        if needle in lowered:
+            return mode
+    return ""
+
+
+####################################################################
+#
+def _leg_name(
+    name: str | None,
+    type_value: str | None,
+    carrier: str,
+    departure: str | None,
+    arrival: str | None,
+) -> str | None:
+    """
+    Settle what a leg is called.
+
+    A flight is left unnamed: Tripsy resolves its airport codes and
+    titles the row itself, better than anything written here -- "San Jose
+    to Santa Barbara" from SJC and SBA.  It does that for flights only,
+    so every other leg says where it ran, since TripIt's own word for one
+    is "Rail" or "Transportation".
+
+    Where the mode is one Tripsy cannot draw, the name carries it: a
+    ropeway files as rail and reads "Ropeway: Owakudani to Sounzan", so
+    the icon is honest and the row still says what it was.
+
+    Args:
+        name: What TripIt called it.
+        type_value: The Tripsy type settled for it.
+        carrier: The operator's name.
+        departure: The departure endpoint's label, if any.
+        arrival: The arrival endpoint's label, if any.
+
+    Returns:
+        The name to give the leg, or None to leave it unnamed.
+    """
+    if type_value == "airplane":
+        return None
+
+    mode = _mode_prefix(carrier)
+    if name and name not in _GENERIC_NAMES and not mode:
+        return name
+
+    if departure and arrival:
+        route = f"{departure} to {arrival}"
+        return f"{mode}: {route}" if mode else route
+
+    # No endpoints to name it by.  The operator says more than "Rail"
+    # does, and for a ropeway it already says the mode.
+    #
+    return carrier or name
+
+
+####################################################################
+#
 def _build(
     kind: str,
     type_value: str | None,
@@ -537,12 +685,6 @@ def _build(
     extras = _unread(obj, source)
     name = str(obj.get("display_name") or "") or None
 
-    # A flight titles itself from its endpoints, and Tripsy's own
-    # guidance says to leave the name off unless a person chose one.
-    # TripIt's is the word "Flight" on all 259 of them.
-    #
-    if type_value == "airplane" and name == _TRIPIT_FLIGHT:
-        name = None
     notes = obj.get("notes") or obj.get("text") or None
 
     if kind == HOSTING:
@@ -569,10 +711,25 @@ def _build(
     elif kind == TRANSPORTATION:
         if all_day:
             extras["x_all_day"] = "TRUE"
+
+        carrier = _carrier_of(source, obj)
+        type_value = type_value or _type_from_carrier(carrier)
+        departure = _endpoint_label(source, "start")
+        arrival = _endpoint_label(source, "end")
+
+        # A station, stop, terminal or pier is public transport, which is
+        # the category the app sets on the legs it creates itself.  A
+        # flight is left alone -- its airports render without one -- and a
+        # transfer's ends are a judgement the export cannot make.
+        #
+        place = "publicTransport" if type_value in _PUBLIC_TRANSPORT else None
+
         built = Transportation(
             internal_identifier=identifier,
-            name=name,
+            name=_leg_name(name, type_value, carrier, departure, arrival),
             transportation_type=type_value,
+            departure_location_type=place,
+            arrival_location_type=place,
             departure_at=starts,
             arrival_at=ends,
             departure_timezone=start_zone,
@@ -583,8 +740,8 @@ def _build(
             departure_longitude=_number(source.get("start_airport_longitude")),
             arrival_latitude=_number(source.get("end_airport_latitude")),
             arrival_longitude=_number(source.get("end_airport_longitude")),
-            departure_description=_endpoint_label(source, "start"),
-            arrival_description=_endpoint_label(source, "end"),
+            departure_description=departure,
+            arrival_description=arrival,
             departure_terminal=source.get("start_terminal") or None,
             arrival_terminal=source.get("end_terminal") or None,
             departure_gate=source.get("start_gate") or None,

@@ -240,6 +240,120 @@ class TestClassify:
 
     ####################################################################
     #
+    @pytest.mark.parametrize(
+        "carrier,expected",
+        [
+            ("Hakone Ropeway", "train"),
+            ("Eizen Cable Car", "train"),
+            ("Hakone sightseeing cruise", "cruise"),
+            ("Sakurajima Ferry", "ferry"),
+            ("Matsue City Bus", "bus"),
+            ("Okinawa Airport Shuttle", "bus"),
+            ("Narita Express 54", "train"),
+            ("JR Uno-port Line", "train"),
+            ("Example Operator", None),
+        ],
+    )
+    def test_a_leg_is_typed_by_who_runs_it(
+        self, carrier: str, expected: str | None
+    ) -> None:
+        """
+        GIVEN: a transport segment the shape cannot type
+        WHEN:  it is parsed
+        THEN:  the operator's name settles it, or nothing does
+
+        The shape types most of the corpus; what is left is a cable car,
+        a lake cruise, a city bus -- journeys the export records without
+        saying what they are.  The operator is the only thing that does.
+        """
+        parsed = only(
+            b.export(b.trip(objects=[b.untyped_transport(carrier=carrier)]))
+        )
+
+        assert parsed.transportations[0].transportation_type == expected
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "carrier,prefix",
+        [
+            ("Hakone Ropeway", "Ropeway: "),
+            ("Eizen Cable Car", "Funicular: "),
+            ("Matsue City Bus", ""),
+        ],
+    )
+    def test_a_mode_tripsy_cannot_draw_goes_in_the_name(
+        self, carrier: str, prefix: str
+    ) -> None:
+        """
+        GIVEN: a leg whose mode has no Tripsy type
+        WHEN:  it is parsed
+        THEN:  the name carries the mode, and the type stays honest
+
+        The icon says rail either way, because that is the nearest thing
+        Tripsy draws.  Swapping the type for a real one later leaves the
+        name still true.
+        """
+        parsed = only(
+            b.export(b.trip(objects=[b.untyped_transport(carrier=carrier)]))
+        )
+        leg = parsed.transportations[0]
+
+        check.is_true(str(leg.name).startswith(prefix), f"{leg.name!r}")
+        check.is_in(" to ", str(leg.name), "named by its ends")
+
+    ####################################################################
+    #
+    def test_a_leg_is_named_by_its_ends_and_a_flight_is_not(self) -> None:
+        """
+        GIVEN: a rail leg and a flight
+        WHEN:  they are parsed
+        THEN:  the rail leg says where it ran and the flight says nothing
+
+        Tripsy resolves a flight's airport codes and titles the row
+        itself -- "San Jose to Santa Barbara" from SJC and SBA -- and it
+        does that for flights only.  TripIt's own word for a rail leg is
+        "Rail", which says less than the stations do.
+        """
+        parsed = only(b.export(b.trip(objects=[b.rail(), b.flight()])))
+        by_type = {t.transportation_type: t for t in parsed.transportations}
+
+        check.equal(
+            by_type["train"].name, "Shin-Osaka Station to Okayama Station"
+        )
+        check.is_none(by_type["airplane"].name, "left for Tripsy to title")
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "record,expected",
+        [
+            pytest.param(b.rail(), "publicTransport", id="rail"),
+            pytest.param(b.ferry(), "publicTransport", id="ferry"),
+            pytest.param(b.flight(), None, id="flight"),
+            pytest.param(b.car_rental(), None, id="car-rental"),
+        ],
+    )
+    def test_a_station_is_marked_as_public_transport(
+        self, record: dict[str, Any], expected: str | None
+    ) -> None:
+        """
+        GIVEN: a leg whose ends are stations, and ones whose are not
+        WHEN:  it is parsed
+        THEN:  only the former carries the publicTransport category
+
+        A station, stop, terminal or pier is public transport, which is
+        what the app sets on the legs it creates.  An airport renders
+        without one, and a rental desk is not a stop.
+        """
+        parsed = only(b.export(b.trip(objects=[record])))
+        leg = parsed.transportations[0]
+
+        check.equal(leg.departure_location_type, expected)
+        check.equal(leg.arrival_location_type, expected)
+
+    ####################################################################
+    #
     def test_rail_is_recognised_without_a_train_number(self) -> None:
         """
         GIVEN: a rail record carrying no train number, as most do
