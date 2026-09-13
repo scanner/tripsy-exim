@@ -11,6 +11,12 @@ and `sources` stay parsers.
 """
 
 # 3rd party imports
+from tripsy_exim.sync.enrich import (
+    DIVERGENCE_KM,
+    Enrichment,
+    Match,
+    enrich,
+)
 from tripsy_exim.sync.overrides import (
     OVERRIDES_DIRNAME,
     Applied,
@@ -38,13 +44,17 @@ __all__ = [
     "OVERRIDES_DIRNAME",
     "REPORT_FILENAME",
     "TRIP_INDEX",
+    "DIVERGENCE_KM",
     "Applied",
+    "Enrichment",
+    "Match",
     "Override",
     "OverrideSet",
     "StagedTrip",
     "TripAlreadyArchived",
     "archived_trips",
     "apply_overrides",
+    "enrich",
     "load_overrides",
     "overrides_path",
     "retyped",
