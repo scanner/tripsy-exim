@@ -94,12 +94,7 @@ class TestStoreFor:
 
     ####################################################################
     #
-    @pytest.mark.parametrize(
-        "url",
-        ["hcvault://vault.example/secret/tripsy", "file:///tmp/secrets"],
-        ids=["vault", "file"],
-    )
-    def test_a_scheme_with_no_backend_is_refused(self, url: str) -> None:
+    def test_a_scheme_with_no_backend_is_refused(self) -> None:
         """
         GIVEN: a URL naming a backend that does not exist
         WHEN:  a store is built for it
@@ -109,7 +104,23 @@ class TestStoreFor:
         report a missing credential rather than a misconfiguration.
         """
         with pytest.raises(SecretError, match="op://"):
-            store_for(url)
+            store_for("file:///tmp/secrets")
+
+    ####################################################################
+    #
+    def test_the_vault_scheme_is_reserved_and_says_its_shape(self) -> None:
+        """
+        GIVEN: an hcvault:// URL
+        WHEN:  a store is built for it
+        THEN:  it says the backend is not built, and what the URL means
+
+        The scheme is claimed before it is implemented so that a URL
+        written today still means the same thing when it works.
+        """
+        with pytest.raises(SecretError, match="not implemented") as raised:
+            store_for("hcvault://vault.example/secret/tripsy-exim")
+
+        check.is_in("<mount>/<path>", str(raised.value))
 
 
 ########################################################################

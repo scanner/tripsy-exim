@@ -4,8 +4,24 @@
 Where credentials are kept, and how they are reached.
 
 A secret store is named by a URL whose scheme picks the backend, so
-nothing above this module knows which one is in use.  1Password is the
-only backend implemented; the scheme is the seam a second one arrives at.
+nothing above this module knows which one is in use.
+
+    op://<vault>/<item>
+        A 1Password item.  Fields are read with `op read` and written
+        with `op item edit`, so which `op` runs decides which account is
+        reachable -- see TRIPSY_OP_BIN.
+
+    hcvault://<host>/<mount>/<path>
+        A HashiCorp Vault secret.  The host is the Vault server, falling
+        back to VAULT_ADDR when the URL omits it; the first path segment
+        is the secret engine's mount point and the rest is the path
+        under it.  Always KV version 2, so the HTTP path carries `data/`
+        between the mount and the path and a read unwraps `data.data`.
+        Not implemented: there is no Vault to check it against, and this
+        project observes rather than guesses.
+
+1Password is the only backend implemented; the scheme is the seam a
+second one arrives at.
 
 Two capabilities, deliberately separate.  Every store can read a field.
 A store that can also write one caches the API token beside the password,
@@ -35,6 +51,12 @@ SECRET_URL_ENV = "TRIPSY_SECRET_URL"
 # runs is worth being able to say.
 #
 OP_BIN_ENV = "TRIPSY_OP_BIN"
+
+# Reserved: the scheme a Vault backend arrives under.  Named now because
+# a URL someone writes today should still mean the same thing when the
+# backend exists, and `vault` alone is too general a word to claim.
+#
+VAULT_SCHEME = "hcvault"
 
 # The fields a store is asked for.  `token` is the only one written.
 #
@@ -210,6 +232,12 @@ def store_for(url: str | None = None) -> SecretStore | None:
     scheme = urlparse(url).scheme
     if scheme == "op":
         return OnePasswordStore(url)
+
+    if scheme == VAULT_SCHEME:
+        raise SecretError(
+            f"{VAULT_SCHEME}:// is not implemented yet -- its grammar is "
+            f"{VAULT_SCHEME}://<host>/<mount>/<path>, always KV v2"
+        )
 
     raise SecretError(
         f"no secret backend for {scheme or 'a URL with no'}:// -- "
