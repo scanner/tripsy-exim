@@ -24,23 +24,33 @@ from tripsy_exim.sync.overrides import (
 )
 from tripsy_exim.sync.staging import (
     REPORT_FILENAME,
+    TRIP_INDEX,
     StagedTrip,
+    TripAlreadyArchived,
+    archived_trips,
     stage,
+    stage_export,
+    stage_export_file,
     stage_file,
 )
 
 __all__ = [
     "OVERRIDES_DIRNAME",
     "REPORT_FILENAME",
+    "TRIP_INDEX",
     "Applied",
     "Override",
     "OverrideSet",
     "StagedTrip",
+    "TripAlreadyArchived",
+    "archived_trips",
     "apply_overrides",
     "load_overrides",
     "overrides_path",
     "retyped",
     "save_overrides",
     "stage",
+    "stage_export",
+    "stage_export_file",
     "stage_file",
 ]
