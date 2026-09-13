@@ -137,6 +137,14 @@ class OnePasswordStore:
         self.url = url.rstrip("/")
         self.binary = binary or os.environ.get(OP_BIN_ENV, "op")
 
+        # `op read` takes the URL, but `op item edit` does not: it wants
+        # the item named on its own with its vault beside it.  Both halves
+        # come from the one URL so a caller still configures one thing.
+        #
+        parsed = urlparse(self.url)
+        self.vault = parsed.netloc
+        self.item = parsed.path.strip("/")
+
     ####################################################################
     #
     def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -177,7 +185,7 @@ class OnePasswordStore:
             return result.stdout.strip()
 
         complaint = result.stderr.strip()
-        if "isn't a field" in complaint or "not found" in complaint.lower():
+        if _is_missing_field(complaint):
             return None
         raise SecretError(
             f"{self.binary} read {self.url}/{field} failed: "
@@ -201,13 +209,47 @@ class OnePasswordStore:
         # than as plain text anyone can read off the item at a glance.
         #
         result = self._run(
-            "item", "edit", self.url, f"{field}[password]={value}"
+            "item",
+            "edit",
+            self.item,
+            "--vault",
+            self.vault,
+            f"{field}[password]={value}",
         )
         if result.returncode != 0:
             raise SecretError(
-                f"{self.binary} item edit {self.url} failed: "
+                f"{self.binary} item edit {self.item} failed: "
                 f"{result.stderr.strip() or 'no output'}"
             )
+
+
+####################################################################
+#
+def _is_missing_field(complaint: str) -> bool:
+    """
+    Whether `op` refused because the field is not there.
+
+    A field that does not exist is an ordinary answer -- a token that has
+    never been cached is exactly this -- while anything else is a store
+    that could not be reached.  Only `op` can tell them apart, and only
+    in prose, so the wordings it uses are matched and nothing else is:
+    guessing wide would swallow a real failure as an absent field and
+    report a missing credential instead of a broken store.
+
+    Observed 2026-09-12 against op 2.32:
+
+        item 'Personal/Tripsy' does not have a field 'token'
+
+    Args:
+        complaint: What `op` wrote to standard error.
+
+    Returns:
+        Whether this names an absent field.
+    """
+    lowered = complaint.lower()
+    return "field" in lowered and (
+        "does not have a field" in lowered or "isn't a field" in lowered
+    )
 
 
 ####################################################################

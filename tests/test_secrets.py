@@ -167,7 +167,12 @@ class TestOnePasswordStore:
         mocker.patch(
             "tripsy_exim.secrets.subprocess.run",
             return_value=completed(
-                returncode=1, stderr='"token" isn\'t a field in the item'
+                returncode=1,
+                stderr=(
+                    "[ERROR] could not read secret "
+                    "'op://Personal/Tripsy/token': item 'Personal/Tripsy' "
+                    "does not have a field 'token'"
+                ),
             ),
         )
         store = OnePasswordStore("op://Personal/Tripsy")
@@ -244,7 +249,9 @@ class TestOnePasswordStore:
                 "op",
                 "item",
                 "edit",
-                "op://Personal/Tripsy",
+                "Tripsy",
+                "--vault",
+                "Personal",
                 "token[password]=abc123",
             ],
         )
@@ -312,3 +319,70 @@ class TestProtocol:
         store: Any = OnePasswordStore("op://Personal/Tripsy")
 
         assert hasattr(store, member)
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "complaint,missing",
+        [
+            pytest.param(
+                "item 'Personal/Tripsy' does not have a field 'token'",
+                True,
+                id="op-2.32-wording",
+            ),
+            pytest.param(
+                '"token" isn\'t a field in the item',
+                True,
+                id="older-wording",
+            ),
+            pytest.param(
+                "No accounts configured for use with 1Password CLI.",
+                False,
+                id="unauthorised-binary",
+            ),
+            pytest.param(
+                "could not connect to 1Password desktop app",
+                False,
+                id="app-not-running",
+            ),
+        ],
+    )
+    def test_only_an_absent_field_reads_as_absent(
+        self, mocker: MockerFixture, complaint: str, missing: bool
+    ) -> None:
+        """
+        GIVEN: op refusing with a particular complaint
+        WHEN:  a field is read
+        THEN:  only an absent field comes back as None
+
+        Matching too widely would swallow a broken store as an empty
+        field and report a missing credential rather than the real fault
+        -- which is what an unauthorised binary looks like.
+        """
+        mocker.patch(
+            "tripsy_exim.secrets.subprocess.run",
+            return_value=completed(returncode=1, stderr=complaint),
+        )
+        store = OnePasswordStore("op://Personal/Tripsy")
+
+        if missing:
+            assert store.get(TOKEN) is None
+        else:
+            with pytest.raises(SecretError):
+                store.get(TOKEN)
+
+    ####################################################################
+    #
+    def test_the_url_is_split_into_a_vault_and_an_item(self) -> None:
+        """
+        GIVEN: an op:// URL
+        WHEN:  a store is built from it
+        THEN:  the vault and item are available separately
+
+        `op read` takes the URL but `op item edit` refuses it, wanting
+        the item named on its own with its vault beside it.
+        """
+        store = OnePasswordStore("op://Personal/Tripsy")
+
+        check.equal(store.vault, "Personal")
+        check.equal(store.item, "Tripsy")
