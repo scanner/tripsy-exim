@@ -17,12 +17,18 @@ from typing import Any
 
 # 3rd party imports
 import pytest
+import pytest_check as check
 from faker import Faker
 
 # Project imports
 from tests import tripit_builder as b
 from tripsy_exim.models import is_minted
-from tripsy_exim.sources import ACTIVITY, HOSTING, TRANSPORTATION
+from tripsy_exim.sources import (
+    ACTIVITY,
+    HOSTING,
+    SKIPPED,
+    TRANSPORTATION,
+)
 from tripsy_exim.sources.ics import uuid_from_uid
 from tripsy_exim.sources.tripit import (
     TRIPIT_JSON_NAMESPACE,
@@ -140,6 +146,57 @@ class TestClassify:
             confident,
         )
         assert reason
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "record,skipped",
+        [
+            pytest.param(b.map_pin(), True, id="a-map-pin"),
+            pytest.param(
+                b.activity(name="Map of Santa Barbara, CA", code="T"),
+                False,
+                id="named-alike-but-shaped-otherwise",
+            ),
+            pytest.param(
+                b.activity(name="Ghibli Museum Visit"),
+                False,
+                id="shaped-alike-but-named-otherwise",
+            ),
+        ],
+    )
+    def test_only_a_map_pin_is_dropped(
+        self, record: dict[str, Any], skipped: bool
+    ) -> None:
+        """
+        GIVEN: a record that is or resembles one of TripIt's map pins
+        WHEN:  it is classified
+        THEN:  only an actual pin is dropped
+
+        Both signals are needed.  The shape alone covers 92 records in a
+        real export and 26 of them are plans somebody typed; the name
+        alone would drop anything a person chose to call a map.
+        """
+        kind, _, _, _ = classify(record)
+
+        assert (kind == SKIPPED) is skipped
+
+    ####################################################################
+    #
+    def test_a_dropped_record_is_reported(self) -> None:
+        """
+        GIVEN: a trip carrying a map pin
+        WHEN:  it is parsed
+        THEN:  no object comes out, and the pin is listed as skipped
+
+        A record nobody can see was discarded is indistinguishable from
+        one the parser failed to read.
+        """
+        parsed = only(b.export(b.trip(objects=[b.map_pin(), b.flight()])))
+
+        check.equal(len(parsed.activities), 0, "no object built")
+        check.equal(len(parsed.skipped), 1, "and the drop is reported")
+        check.is_in("map of a place", parsed.skipped[0].reason)
 
     ####################################################################
     #

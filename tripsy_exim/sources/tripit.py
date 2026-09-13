@@ -37,6 +37,7 @@ from tripsy_exim.models import Activity, Hosting, Transportation, Trip, mint
 from tripsy_exim.sources.ics import (
     ACTIVITY,
     HOSTING,
+    SKIPPED,
     TRANSPORTATION,
     EventNote,
     ParsedCalendar,
@@ -83,6 +84,12 @@ _TRAIN = "train"
 _CAR = "car"
 _TRANSFER = "transfer"
 _FERRY_TYPE = "ferry"
+
+# How TripIt names and shapes a map pin.  Observed across 66 of them in
+# a real export, all alike.
+#
+_MAP_PREFIX = "Map of "
+_MAP_SHAPE = frozenset({"Address", "DateTime", "display_name"})
 _ROADTRIP = "roadtrip"
 
 # Keys consumed off a trip record.  Everything else is retained.
@@ -194,6 +201,25 @@ def classify(obj: dict[str, Any]) -> tuple[str, str | None, bool, str]:
             "driving",
         )
 
+    if _is_map(obj):
+        # TripIt files a place you looked up as an object of its own,
+        # named for you: "Map of <place> - <address>".  It is a pin, not
+        # something done, and where it names lodging the trip already
+        # carries that as a hosting.
+        #
+        # Named rather than shaped, which this module otherwise avoids.
+        # The shape cannot separate them: 92 records carry exactly these
+        # three keys and 26 are real plans somebody typed.  The prefix is
+        # TripIt's own, written by the machine that made the record, so
+        # it identifies as well as a type code would if there were one.
+        #
+        return (
+            SKIPPED,
+            None,
+            True,
+            "a map of a place rather than something done",
+        )
+
     code = obj.get("detail_type_code")
     if code == _TOUR:
         return ACTIVITY, _TOUR_TYPE, True, "tour (code T)"
@@ -206,6 +232,26 @@ def classify(obj: dict[str, Any]) -> tuple[str, str | None, bool, str]:
         False,
         "no rule matched; defaulted to activity",
     )
+
+
+####################################################################
+#
+def _is_map(obj: dict[str, Any]) -> bool:
+    """
+    Whether a record is one of TripIt's map pins.
+
+    Both signals are required.  The name is how they are recognised and
+    the shape is what keeps the rule narrow: a record carrying anything
+    else is a booking of some kind, whatever it is called.
+
+    Args:
+        obj: One entry from a trip's `Objects` list.
+
+    Returns:
+        Whether this is a map pin.
+    """
+    name = str(obj.get("display_name") or "")
+    return name.startswith(_MAP_PREFIX) and set(obj) == _MAP_SHAPE
 
 
 ####################################################################
@@ -326,6 +372,21 @@ def _parse_object(
     kind, type_value, confident, reason = classify(obj)
     name = str(obj.get("display_name") or "")
     segments = _segments(obj)
+
+    if kind == SKIPPED:
+        parsed.notes.append(
+            EventNote(
+                uid=_token((trip_token, kind, name), within),
+                identifier="",
+                kind=SKIPPED,
+                summary=name,
+                confident=confident,
+                reason=reason,
+                timezone=None,
+                timezone_source="none",
+            )
+        )
+        return
 
     # A transport record holds a leg per segment, and each leg is its own
     # journey with its own endpoints.  Everything else is one object.

@@ -101,6 +101,11 @@ HOSTING = "hosting"
 ACTIVITY = "activity"
 TRANSPORTATION = "transportation"
 
+# Not a collection: what a record is filed under when it should not be
+# imported at all.
+#
+SKIPPED = "skipped"
+
 
 ########################################################################
 ########################################################################
@@ -156,6 +161,19 @@ class ParsedCalendar:
     def unclassified(self) -> list[EventNote]:
         """Events that matched no rule and defaulted to an activity."""
         return [n for n in self.notes if not n.confident]
+
+    ####################################################################
+    #
+    @property
+    def skipped(self) -> list[EventNote]:
+        """
+        Records the parser deliberately produced nothing for.
+
+        Dropped rather than imported, and listed so the decision is
+        visible: a record nobody can see was discarded is
+        indistinguishable from one the parser failed to read.
+        """
+        return [n for n in self.notes if n.kind == SKIPPED]
 
     ####################################################################
     #

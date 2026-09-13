@@ -12,6 +12,7 @@ fixtures alone.
 from tripsy_exim.sources.ics import (
     ACTIVITY,
     HOSTING,
+    SKIPPED,
     TRANSPORTATION,
     TRIPIT_UID_NAMESPACE,
     EventNote,
@@ -41,6 +42,7 @@ from tripsy_exim.sources.tripit import (
 
 __all__ = [
     "ACTIVITY",
+    "SKIPPED",
     "HOSTING",
     "TRANSPORTATION",
     "TRIPIT_JSON_NAMESPACE",

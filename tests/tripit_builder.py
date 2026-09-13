@@ -265,6 +265,26 @@ def untyped_transport(
 
 ####################################################################
 #
+def map_pin(
+    *,
+    place: str = "Santa Barbara, CA",
+    day: str = "2024-05-02",
+) -> dict[str, Any]:
+    """
+    A map pin, which TripIt names for you and files as an object.
+
+    Carries a place and a time and nothing else -- the same shape as a
+    plan somebody typed, which is why the name is what tells them apart.
+    """
+    return {
+        "display_name": f"Map of {place}",
+        "Address": {"address": place},
+        "DateTime": moment(day, "16:48:00"),
+    }
+
+
+####################################################################
+#
 def lodging(
     *,
     name: str = "Example Hotel",

@@ -29,6 +29,7 @@ from tripsy_exim.models import is_scratch
 from tripsy_exim.sources import (
     ACTIVITY,
     HOSTING,
+    SKIPPED,
     TRANSPORTATION,
     EventNote,
     ParsedCalendar,
@@ -317,6 +318,7 @@ def _write_report(
             "transportations": len(parsed.transportations),
         },
         "unclassified": [_note(n) for n in parsed.unclassified],
+        "skipped": [_note(n) for n in parsed.skipped],
         "guessed_timezones": [_note(n) for n in parsed.guessed_timezones],
         "index": _index(parsed),
     }
@@ -339,6 +341,11 @@ def _index(parsed: ParsedCalendar) -> dict[str, dict[str, str]]:
     """
     index: dict[str, dict[str, str]] = {}
     for note in parsed.notes:
+        # A skipped record produced no object, so there is nothing for a
+        # correction to reach and nothing to record here.
+        #
+        if note.kind == SKIPPED:
+            continue
         token = uuid_from_uid(note.uid)
         if token is None:
             continue
