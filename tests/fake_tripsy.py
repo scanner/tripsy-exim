@@ -342,6 +342,16 @@ class FakeTripsy:
         if trip_id not in self._trips:
             return 404, {"detail": "Not found."}
 
+        # A transportation must say what kind it is.  Verified against
+        # the live API on 2026-09-13: a create without one is refused,
+        # which a whole run of otherwise good legs would otherwise
+        # discover one object at a time.
+        #
+        if collection == "transportations" and not payload.get(
+            "transportation_type"
+        ):
+            return 400, {"transportation_type": ["This field is required."]}
+
         identifier = payload.get("internal_identifier")
         if identifier:
             existing = self._children.get((trip_id, collection), {})

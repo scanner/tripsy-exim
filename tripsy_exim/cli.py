@@ -707,6 +707,17 @@ def upload_command(
         click.echo("\nDry run.  Nothing was sent.  Pass --write to upload.")
         return
 
+    # Tripsy requires a transportation to say what kind it is, so an
+    # untyped leg is refused one object at a time in the middle of a run,
+    # leaving its trip short.  Better to say so before anything is sent.
+    #
+    if untyped:
+        raise click.ClickException(
+            f"{untyped} legs carry no transportation_type, which Tripsy "
+            f"requires.  They would be refused and their trips would go up "
+            f"incomplete.  Type them, or select trips that have none."
+        )
+
     created = existing = 0
     failures: list[str] = []
     with open_session(username, password) as client:

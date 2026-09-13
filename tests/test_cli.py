@@ -623,3 +623,36 @@ class TestArchiveResolution:
         check.not_equal(result.exit_code, 0)
         check.is_in("cannot read the archive", result.output)
         check.is_not_instance(result.exception, OSError, "reported, not raised")
+
+    ####################################################################
+    #
+    def test_a_write_is_refused_while_a_leg_carries_no_type(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """
+        GIVEN: a staged trip holding a leg the reader could not type
+        WHEN:  upload is run with --write
+        THEN:  it refuses before sending anything
+
+        Tripsy requires a transportation to say what kind it is, so an
+        untyped leg is refused one object at a time in the middle of a
+        run and its trip goes up short.
+        """
+        monkeypatch.setenv("TRIPSY_USERNAME", "someone")
+        monkeypatch.setenv("TRIPSY_PASSWORD", "secret")
+
+        export = write_export(
+            tmp_path,
+            b.trip(objects=[b.flight(), b.untyped_transport()]),
+        )
+        archive_root = tmp_path / "archive"
+        runner.invoke(
+            main, ["stage-export", str(export), "--archive", str(archive_root)]
+        )
+
+        result = runner.invoke(
+            main, ["upload", "--archive", str(archive_root), "--write"]
+        )
+
+        check.not_equal(result.exit_code, 0)
+        check.is_in("no transportation_type", result.output)
