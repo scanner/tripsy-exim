@@ -16,18 +16,22 @@ typed access to that object and nothing more.
 
 # 3rd party imports
 from tripsy_exim.store.archive import (
+    ARCHIVE_ENV,
     ARCHIVE_SCHEMA_VERSION,
     COLLECTIONS,
     Archive,
+    default_root,
     local_key,
     quarantine_key,
     write_json,
 )
 
 __all__ = [
+    "ARCHIVE_ENV",
     "ARCHIVE_SCHEMA_VERSION",
     "COLLECTIONS",
     "Archive",
+    "default_root",
     "local_key",
     "quarantine_key",
     "write_json",

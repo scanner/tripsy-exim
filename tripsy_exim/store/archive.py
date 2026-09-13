@@ -70,7 +70,39 @@ COLLECTIONS: dict[type[CanonicalModel], str] = {
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
+# Names the archive directory when no flag does.
+#
+ARCHIVE_ENV = "TRIPSY_EXIM_ARCHIVE"
+
 M = TypeVar("M", bound=CanonicalModel)
+
+
+####################################################################
+#
+def default_root() -> Path:
+    """
+    Where the archive lives when nothing names a directory.
+
+    `TRIPSY_EXIM_ARCHIVE` overrides it, and a command line flag overrides
+    that.  The fallback follows the XDG base directory specification, so
+    an archive is not tied to the directory a command happened to be run
+    from -- it is a long-lived copy of a whole account, not a build
+    artefact.
+
+    Returns:
+        The directory the archive is read from and written to.
+    """
+    configured = os.environ.get(ARCHIVE_ENV)
+    if configured:
+        return Path(configured).expanduser()
+
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = (
+        Path(data_home).expanduser()
+        if data_home
+        else Path.home() / ".local" / "share"
+    )
+    return base / "tripsy-exim" / "archive"
 
 
 ####################################################################

@@ -28,7 +28,7 @@ PATCH pass, not something a re-run does on its own.
 # system imports
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -53,6 +53,10 @@ from tripsy_exim.sync.overrides import MODEL_FOR_COLLECTION
 # The order collections are written in.  Lodging and travel first, so a
 # partial run leaves a trip with its skeleton rather than its trimmings.
 #
+# Where finished trips are recorded in the manifest.
+#
+UPLOADED = "uploaded_trips"
+
 COLLECTION_ORDER: tuple[str, ...] = (
     "transportations",
     "hostings",
@@ -261,6 +265,105 @@ def numbered(objects: list[Child]) -> list[tuple[int, Child]]:
 
 ####################################################################
 #
+def in_travel_order(archive: Archive, keys: list[str]) -> list[str]:
+    """
+    Put trip keys in the order the trips were travelled, oldest first.
+
+    A trip key is a digest, so the archive's own directory order is
+    effectively random.  Uploading oldest first makes `--limit` a way of
+    working forward through an account rather than a way of picking an
+    arbitrary handful.
+
+    Args:
+        archive: The archive holding the staged trips.
+        keys: The keys to order.
+
+    Returns:
+        The same keys, oldest trip first, with undated trips last.
+    """
+
+    def when(key: str) -> tuple[int, str, str]:
+        trip = staged_trip(archive, key)
+        starts = getattr(trip, "starts_at", None) if trip else None
+        return (1 if starts is None else 0, str(starts or ""), key)
+
+    return sorted(keys, key=when)
+
+
+####################################################################
+#
+def resolve_trip_key(archive: Archive, needle: str) -> str:
+    """
+    Find one staged trip by its key or by its name.
+
+    A key is a digest nobody can recognise, so a name is what a person
+    actually has.  An exact key wins outright; otherwise the name is
+    matched case-insensitively as a substring.
+
+    Args:
+        archive: The archive holding the staged trips.
+        needle: A trip key, or part of a trip's name.
+
+    Returns:
+        The one key that matched.
+
+    Raises:
+        ValueError: Nothing matched, or more than one did.  An ambiguous
+            match names the candidates rather than picking one.
+    """
+    keys = archive.trip_keys()
+    if needle in keys:
+        return needle
+
+    wanted = needle.casefold()
+    matched = []
+    for key in keys:
+        trip = staged_trip(archive, key)
+        name = str(getattr(trip, "name", "") or "")
+        if wanted in name.casefold():
+            matched.append((key, name))
+
+    if not matched:
+        raise ValueError(f"no staged trip matches {needle!r}")
+    if len(matched) > 1:
+        listed = "\n".join(f"    {name}  [{key}]" for key, name in matched)
+        raise ValueError(f"{len(matched)} trips match {needle!r}:\n{listed}")
+    return matched[0][0]
+
+
+####################################################################
+#
+def uploaded_trips(archive: Archive) -> dict[str, str]:
+    """
+    The trips an earlier run finished, and when it finished them.
+
+    A finished trip is skipped outright rather than re-sent.  Re-sending
+    is harmless -- every create would be suppressed -- but a hundred-object
+    trip costs a hundred suppressed requests to learn nothing, and it
+    would consume a `--limit` that was meant for work still to do.
+
+    Args:
+        archive: The archive to read.
+
+    Returns:
+        Trip keys to the instant each was finished.
+    """
+    record = archive.read_manifest().get(UPLOADED) or {}
+    return {str(key): str(value) for key, value in record.items()}
+
+
+####################################################################
+#
+def mark_uploaded(archive: Archive, trip_key: str) -> None:
+    """Record that a trip finished, so a later run steps over it."""
+    manifest: dict[str, Any] = archive.read_manifest()
+    record = manifest.setdefault(UPLOADED, {})
+    record[trip_key] = datetime.now(UTC).isoformat(timespec="seconds")
+    archive.write_manifest(manifest)
+
+
+####################################################################
+#
 def plan_trip(archive: Archive, trip_key: str) -> TripPlan:
     """
     Work out what importing one staged trip would do.
@@ -308,11 +411,11 @@ def plan_trip(archive: Archive, trip_key: str) -> TripPlan:
 
 ####################################################################
 #
-def import_trip(
+def upload_trip(
     client: TripsyClient, archive: Archive, trip_key: str
 ) -> TripImport:
     """
-    Write one staged trip to Tripsy.
+    Upload one staged trip to Tripsy.
 
     The trip is created first and its id resolved, then its children in
     `sort_order`.  An object whose identifier is already taken is counted
@@ -387,6 +490,9 @@ def import_trip(
             result.created += 1
         else:
             result.existing += 1
+
+    if not result.failed:
+        mark_uploaded(archive, trip_key)
 
     return result
 

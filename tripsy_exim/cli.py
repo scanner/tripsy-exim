@@ -26,9 +26,16 @@ from dotenv import load_dotenv
 from tripsy_exim import __version__
 from tripsy_exim.api import IMPORT, INTERACTIVE, TokenAuth, TripsyClient
 from tripsy_exim.models import scratch_namespace
-from tripsy_exim.store import Archive
+from tripsy_exim.store import ARCHIVE_ENV, Archive, default_root
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
-from tripsy_exim.sync.importer import import_trip, plan_trip
+from tripsy_exim.sync.importer import (
+    in_travel_order,
+    plan_trip,
+    resolve_trip_key,
+    staged_trip,
+    upload_trip,
+    uploaded_trips,
+)
 
 
 ########################################################################
@@ -185,9 +192,12 @@ def resolve_namespace(namespace: str | None, scratch: bool) -> str | None:
 @click.option(
     "--archive",
     "archive_root",
-    required=True,
+    default=None,
     type=click.Path(file_okay=False, path_type=Path),
-    help="Directory the canonical objects are written to.",
+    help=(
+        "Directory the canonical objects are written to.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
 )
 @click.option(
     "--namespace",
@@ -205,7 +215,7 @@ def resolve_namespace(namespace: str | None, scratch: bool) -> str | None:
 )
 def stage(
     sources: tuple[Path, ...],
-    archive_root: Path,
+    archive_root: Path | None,
     namespace: str | None,
     scratch: bool,
 ) -> None:
@@ -218,6 +228,7 @@ def stage(
     """
     namespace = resolve_namespace(namespace, scratch)
 
+    archive_root = archive_root or default_root()
     archive = Archive(archive_root)
     total = 0
     for source in sources:
@@ -248,9 +259,12 @@ def stage(
 @click.option(
     "--archive",
     "archive_root",
-    required=True,
+    default=None,
     type=click.Path(file_okay=False, path_type=Path),
-    help="Directory the canonical objects are written to.",
+    help=(
+        "Directory the canonical objects are written to.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
 )
 @click.option(
     "--namespace",
@@ -268,7 +282,7 @@ def stage(
 )
 def stage_export_command(
     export: Path,
-    archive_root: Path,
+    archive_root: Path | None,
     namespace: str | None,
     scratch: bool,
 ) -> None:
@@ -286,6 +300,7 @@ def stage_export_command(
     """
     namespace = resolve_namespace(namespace, scratch)
 
+    archive_root = archive_root or default_root()
     archive = Archive(archive_root)
     try:
         staged = stage_export_file(archive, export, namespace)
@@ -316,25 +331,80 @@ def stage_export_command(
 
 ####################################################################
 #
-@main.command("import")
+@main.command("list")
 @click.option(
     "--archive",
     "archive_root",
-    required=True,
+    default=None,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="Directory the staged trips are read from.",
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--pending/--all",
+    default=False,
+    help="List only trips no run has finished uploading.",
+)
+def list_command(archive_root: Path | None, pending: bool) -> None:
+    """
+    List the trips staged in the archive, oldest first.
+
+    The mark in the first column says whether a run has finished
+    uploading that trip.
+    """
+    archive_root = archive_root or default_root()
+    archive = Archive(archive_root)
+    keys = in_travel_order(archive, archive.trip_keys())
+    if not keys:
+        raise click.ClickException(f"no staged trips in {archive_root}")
+
+    done = uploaded_trips(archive)
+    shown = 0
+    for key in keys:
+        if pending and key in done:
+            continue
+        shown += 1
+        trip = staged_trip(archive, key)
+        name = str(getattr(trip, "name", "") or key)
+        starts = getattr(trip, "starts_at", None)
+        mark = "up" if key in done else "  "
+        click.echo(f"  {mark}  {str(starts or ''):10}  {name[:48]:48} {key}")
+
+    click.echo(f"\n{shown} trips, {len(done)} already uploaded")
+
+
+####################################################################
+#
+@main.command("upload")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
 )
 @click.option(
     "--trip",
-    "trip_keys",
+    "wanted",
     multiple=True,
-    help="Import only this trip key.  Repeatable; default is every trip.",
+    help=(
+        "Upload only this trip, named by part of its name or by its key.  "
+        "Repeatable; default is every trip."
+    ),
 )
 @click.option(
     "--limit",
     type=int,
     default=None,
-    help="Import at most this many trips, for a cautious first run.",
+    help=(
+        "Upload at most this many trips, oldest first.  Trips an earlier "
+        "run finished do not count against it."
+    ),
 )
 @click.option(
     "--write/--dry-run",
@@ -344,6 +414,12 @@ def stage_export_command(
         "writing, since an identifier Tripsy has seen is never released."
     ),
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Include trips an earlier run already finished.",
+)
 @click.option("--username", default=None, help="Tripsy account username.")
 @click.option("--password", default=None, help="Tripsy account password.")
 @click.option(
@@ -352,31 +428,62 @@ def stage_export_command(
     default=False,
     help="List every object a trip would write, not just the totals.",
 )
-def import_command(
-    archive_root: Path,
-    trip_keys: tuple[str, ...],
+def upload_command(
+    archive_root: Path | None,
+    wanted: tuple[str, ...],
     limit: int | None,
     write: bool,
+    force: bool,
     username: str | None,
     password: str | None,
     verbose: bool,
 ) -> None:
     """
-    Write staged trips to Tripsy.
+    Upload staged trips from the archive to Tripsy.
 
     Plans first and prints the plan.  Without `--write` that is all it
     does: nothing is sent, no credentials are needed, and the numbers
     shown are the ones a real run would send.
 
+    Trips go oldest first, so `--limit` works forward through an account
+    rather than picking an arbitrary handful.  A trip an earlier run
+    finished is stepped over without a request and does not count against
+    `--limit`, so running with `--limit 1` repeatedly walks the archive a
+    trip at a time.
+
     Re-running is a no-op rather than a source of duplicates, so a run
     that failed part way is resumed by running it again.
     """
+    archive_root = archive_root or default_root()
     archive = Archive(archive_root)
-    keys = list(trip_keys) or archive.trip_keys()
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = archive.trip_keys()
     if not keys:
         raise click.ClickException(f"no staged trips in {archive_root}")
+
+    keys = in_travel_order(archive, keys)
+
+    done = uploaded_trips(archive)
+    skipped = 0
+    if not force:
+        before = len(keys)
+        keys = [key for key in keys if key not in done]
+        skipped = before - len(keys)
     if limit is not None:
         keys = keys[:limit]
+
+    if not keys:
+        click.echo(
+            f"Nothing to upload: {skipped} trips already finished.  "
+            "Pass --force to send them again."
+        )
+        return
 
     plans = [plan_trip(archive, key) for key in keys]
     objects = sum(plan.total for plan in plans)
@@ -400,16 +507,18 @@ def import_command(
     click.echo(
         f"\n{len(plans)} trips, {objects} objects, {untyped} untyped legs"
     )
+    if skipped:
+        click.echo(f"{skipped} trips skipped, already uploaded")
 
     # Two staged trips sharing a name and a date range are either one
     # journey recorded twice or one journey recorded per traveller.  A
-    # per-trip plan cannot show it, and importing both makes two rival
+    # per-trip plan cannot show it, and uploading both makes two rival
     # trips out of what the app should hold as one.
     #
     planned = {plan.trip_key for plan in plans}
     index = archive.read_manifest().get(TRIP_INDEX) or {}
-    for join_key, keys in sorted(index.items()):
-        shared = [key for key in keys if key in planned]
+    for join_key, shared_keys in sorted(index.items()):
+        shared = [key for key in shared_keys if key in planned]
         if len(shared) > 1:
             click.echo(f"\n  NOTE: {len(shared)} trips share one key:")
             click.echo(f"      {join_key}")
@@ -417,7 +526,7 @@ def import_command(
                 click.echo(f"      {key}")
 
     if not write:
-        click.echo("\nDry run.  Nothing was sent.  Pass --write to import.")
+        click.echo("\nDry run.  Nothing was sent.  Pass --write to upload.")
         return
 
     token = authenticate(username, password)
@@ -425,7 +534,7 @@ def import_command(
     failures: list[str] = []
     with TripsyClient(profile=IMPORT, auth=TokenAuth(token)) as client:
         for plan in plans:
-            result = import_trip(client, archive, plan.trip_key)
+            result = upload_trip(client, archive, plan.trip_key)
             created += result.created
             existing += result.existing
             failures.extend(result.failed)

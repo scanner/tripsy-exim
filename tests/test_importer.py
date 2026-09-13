@@ -23,11 +23,11 @@ from tripsy_exim.store import Archive
 from tripsy_exim.sync import stage_export
 from tripsy_exim.sync.importer import (
     child_ids_by_identifier,
-    import_trip,
     numbered,
     plan_trip,
     staged_children,
     staged_trip,
+    upload_trip,
 )
 
 
@@ -195,7 +195,7 @@ class TestImport:
         key = only_key(staged)
         plan = plan_trip(staged, key)
 
-        result = import_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, key)
 
         check.is_true(result.trip_created, "trip created")
         check.is_not_none(result.trip_id, "and its id resolved")
@@ -219,7 +219,7 @@ class TestImport:
         key = only_key(staged)
         plan = plan_trip(staged, key)
 
-        result = import_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, key)
         assert result.trip_id is not None
 
         held: dict[str, int] = {}
@@ -245,9 +245,9 @@ class TestImport:
         rather than minted per run.
         """
         key = only_key(staged)
-        first = import_trip(api_client, staged, key)
+        first = upload_trip(api_client, staged, key)
 
-        second = import_trip(api_client, staged, key)
+        second = upload_trip(api_client, staged, key)
 
         check.equal(second.trip_id, first.trip_id, "the same trip")
         check.is_false(second.trip_created, "which was not created again")
@@ -287,7 +287,7 @@ class TestImport:
             {"internal_identifier": first.identifier, "sort_order": 999},
         )
 
-        result = import_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, key)
 
         check.is_false(result.trip_created, "the trip was already there")
         check.equal(result.existing, 1, "the one child already written")
@@ -322,7 +322,7 @@ class TestImport:
         the only way to reach an object that is already there.
         """
         key = only_key(staged)
-        result = import_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, key)
         assert result.trip_id is not None
 
         found = child_ids_by_identifier(
@@ -348,4 +348,4 @@ class TestImport:
         THEN:  ValueError is raised before anything is sent
         """
         with pytest.raises(ValueError, match="no trip record"):
-            import_trip(api_client, archive, "txim-nothing-g01-deadbeef")
+            upload_trip(api_client, archive, "txim-nothing-g01-deadbeef")
