@@ -21,7 +21,7 @@ from pathlib import Path
 
 # 3rd party imports
 import click
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 # Project imports
 from tripsy_exim import __version__
@@ -60,6 +60,12 @@ from tripsy_exim.sync.importer import (
 @click.version_option(version=__version__, prog_name="tripsy-exim")
 def main() -> None:
     """Export and import trip data for Tripsy.app."""
+    # Before any command reads the environment, and before a default is
+    # resolved from it.  Searched from the working directory upwards, so
+    # running from anywhere inside a project finds that project's file
+    # rather than one beside the installed package.
+    #
+    load_dotenv(find_dotenv(usecwd=True))
 
 
 ########################################################################
@@ -97,8 +103,6 @@ def resolve_credentials(
     Raises:
         click.ClickException: Nothing resolved to a usable pair.
     """
-    load_dotenv()
-
     username = username or os.environ.get("TRIPSY_USERNAME")
     password = password or os.environ.get("TRIPSY_PASSWORD")
     if username and password:
@@ -185,6 +189,51 @@ def open_session(
 
 ####################################################################
 #
+def archive_for(archive_root: Path | None) -> Path:
+    """
+    Settle which directory holds the archive.
+
+    A flag wins, then `TRIPSY_EXIM_ARCHIVE`, then the XDG data
+    directory.  A leading `~` is expanded wherever the value came from:
+    a shell expands one on the command line, but nothing expands one
+    written in `.env` or exported with quotes.
+
+    Args:
+        archive_root: The directory named on the command line, or None.
+
+    Returns:
+        The directory to read and write.
+    """
+    if archive_root is not None:
+        return Path(archive_root).expanduser()
+    return default_root()
+
+
+####################################################################
+#
+def staged_archive(archive_root: Path | None) -> Archive:
+    """
+    Open an archive that is expected to already hold trips.
+
+    Args:
+        archive_root: The directory named on the command line, or None.
+
+    Returns:
+        The archive.
+
+    Raises:
+        click.ClickException: There is no such directory.  The resolved
+            path is named, since it may have come from `.env` or a
+            default rather than from the command line.
+    """
+    root = archive_for(archive_root)
+    if not root.is_dir():
+        raise click.ClickException(f"no archive directory at {root}")
+    return Archive(root)
+
+
+####################################################################
+#
 def resolve_namespace(namespace: str | None, scratch: bool) -> str | None:
     """
     Settle which identifier namespace a staging run mints into.
@@ -257,7 +306,7 @@ def stage(
     """
     namespace = resolve_namespace(namespace, scratch)
 
-    archive_root = archive_root or default_root()
+    archive_root = archive_for(archive_root)
     archive = Archive(archive_root)
     total = 0
     for source in sources:
@@ -329,7 +378,7 @@ def stage_export_command(
     """
     namespace = resolve_namespace(namespace, scratch)
 
-    archive_root = archive_root or default_root()
+    archive_root = archive_for(archive_root)
     archive = Archive(archive_root)
     try:
         staged = stage_export_file(archive, export, namespace)
@@ -365,7 +414,7 @@ def stage_export_command(
     "--archive",
     "archive_root",
     default=None,
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    type=click.Path(file_okay=False, path_type=Path),
     help=(
         "Directory the staged trips are read from.  Defaults to "
         f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
@@ -383,8 +432,8 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
     The mark in the first column says whether a run has finished
     uploading that trip.
     """
-    archive_root = archive_root or default_root()
-    archive = Archive(archive_root)
+    archive = staged_archive(archive_root)
+    archive_root = archive.root
     keys = in_travel_order(archive, archive.trip_keys())
     if not keys:
         raise click.ClickException(f"no staged trips in {archive_root}")
@@ -411,7 +460,7 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
     "--archive",
     "archive_root",
     default=None,
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    type=click.Path(file_okay=False, path_type=Path),
     help=(
         "Directory the staged trips are read from.  Defaults to "
         f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
@@ -483,8 +532,8 @@ def upload_command(
     Re-running is a no-op rather than a source of duplicates, so a run
     that failed part way is resumed by running it again.
     """
-    archive_root = archive_root or default_root()
-    archive = Archive(archive_root)
+    archive = staged_archive(archive_root)
+    archive_root = archive.root
 
     if wanted:
         try:

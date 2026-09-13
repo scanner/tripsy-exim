@@ -17,7 +17,7 @@ from faker import Faker
 from tests import tripit_builder as b
 from tests.ics_builder import build_calendar, to_ics
 from tripsy_exim.cli import main
-from tripsy_exim.store import Archive
+from tripsy_exim.store import ARCHIVE_ENV, Archive
 from tripsy_exim.sync.importer import in_travel_order, mark_uploaded
 
 
@@ -499,3 +499,97 @@ class TestListCommand:
         check.equal(result.exit_code, 0, result.output)
         check.is_in("Later trip", result.output)
         check.is_not_in("Earlier trip", result.output)
+
+
+########################################################################
+########################################################################
+#
+class TestArchiveResolution:
+    """Tests for settling which directory the archive is."""
+
+    ####################################################################
+    #
+    def test_dot_env_names_the_archive(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        GIVEN: an archive named only in a .env file
+        WHEN:  a command that reads the archive runs
+        THEN:  it reads that archive
+
+        .env has to be loaded before a default is resolved from the
+        environment, not when credentials are first needed -- a dry run
+        never asks for credentials at all.
+        """
+        export = write_export(tmp_path, b.trip(objects=[b.flight()]))
+        archive_root = tmp_path / "named-by-dotenv"
+        runner.invoke(
+            main, ["stage-export", str(export), "--archive", str(archive_root)]
+        )
+
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".env").write_text(f"{ARCHIVE_ENV}={archive_root}\n")
+        monkeypatch.chdir(project)
+        monkeypatch.delenv(ARCHIVE_ENV, raising=False)
+
+        result = runner.invoke(main, ["list"])
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_in("1 trips", result.output)
+
+    ####################################################################
+    #
+    def test_a_leading_tilde_is_expanded(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        GIVEN: an archive path written with a leading ~
+        WHEN:  a command resolves it
+        THEN:  it lands under the home directory
+
+        A shell expands one on the command line, but nothing expands one
+        written in .env or exported with quotes.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv(ARCHIVE_ENV, "~/Documents/tripsy-archive")
+
+        export = write_export(tmp_path, b.trip(objects=[b.flight()]))
+        result = runner.invoke(main, ["stage-export", str(export)])
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_true(
+            (home / "Documents" / "tripsy-archive" / "trips").is_dir(),
+            "staged under the expanded path",
+        )
+
+    ####################################################################
+    #
+    def test_a_missing_archive_names_the_resolved_path(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        GIVEN: an archive directory that does not exist
+        WHEN:  a command that reads the archive runs
+        THEN:  the error names where it actually looked
+
+        The path may have come from .env or from a default, so repeating
+        it back is the only way to see which one was used.
+        """
+        monkeypatch.setenv(ARCHIVE_ENV, str(tmp_path / "nowhere"))
+
+        result = runner.invoke(main, ["list"])
+
+        check.not_equal(result.exit_code, 0)
+        check.is_in("nowhere", result.output)
