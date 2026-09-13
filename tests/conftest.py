@@ -28,7 +28,7 @@ from pytest_factoryboy import register
 from pytest_mock import MockerFixture
 
 # Project imports
-from tests import ics_builder
+from tests import ics_builder, tripit_builder
 from tests.clock import FakeClock
 from tests.factories import (
     ActivityPayloadFactory,
@@ -159,6 +159,24 @@ def ics_calendar(faker: Faker) -> Callable[..., str]:
 
     def build(**kwargs: Any) -> str:
         return ics_builder.to_ics(ics_builder.build_calendar(faker, **kwargs))
+
+    return build
+
+
+####################################################################
+#
+@pytest.fixture
+def tripit_export(faker: Faker) -> Callable[..., dict[str, Any]]:
+    """
+    Build a synthetic TripIt GDPR export document.
+
+    Takes the same keyword arguments as `tripit_builder.random_export`,
+    so a test asks for the number of trips it wants.  Roughly a third of
+    the generated text is mojibake, as the real export is.
+    """
+
+    def build(**kwargs: Any) -> dict[str, Any]:
+        return tripit_builder.random_export(faker, **kwargs)
 
     return build
 

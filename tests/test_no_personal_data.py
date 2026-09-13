@@ -3,14 +3,20 @@
 """
 Guard the public repository against real personal data.
 
-`.gitignore` blocks `*.ics` but re-allows `tests/fixtures/**/*.ics`, so a
-real calendar copied into that directory would be committed to a public
-repo without complaint.  That is the accident these tests exist to catch.
+`.gitignore` blocks `*.ics` and `*.json` but re-allows both under
+`tests/fixtures/`, so a real calendar or a real GDPR export copied into
+that directory would be committed to a public repo without complaint.
+That is the accident these tests exist to catch.
 
 They are split deliberately.  The structural checks run everywhere,
 including CI, and catch a real export by its own markers.  The overlap
-check needs from_tripit/ to be present and skips loudly when it is not --
-a guard that silently passes because its input is missing guards nothing.
+check needs a real export to compare against and skips loudly without
+one -- a guard that silently passes because its input is missing guards
+nothing.
+
+Where that export lives is deliberately not written down here.  Set
+`TRIPSY_EXIM_REAL_EXPORT` to the directory holding it; a public repo
+should not name a path on anyone's disk.
 
 The structural check is the stronger of the two: an overlap check only
 catches a verbatim copy, while PRODID and the UID domain identify a real
@@ -18,6 +24,8 @@ export whatever it contains.
 """
 
 # system imports
+import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -36,12 +44,15 @@ from tests.ics_builder import (
     field,
     uid_of,
 )
+from tests.tripit_builder import SYNTHETIC_MARKER, SYNTHETIC_MARKER_VALUE
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# Reference material only.  Never committed, and absent in CI.
+# Reference material only.  Never committed, and absent in CI, so the
+# overlap check is opt-in through the environment rather than through a
+# path this file would otherwise have to name.
 #
-REAL_EXPORT = Path(__file__).parent.parent / "from_tripit"
+REAL_EXPORT_ENV = "TRIPSY_EXIM_REAL_EXPORT"
 
 # Reserved by RFC 2606 and RFC 6761, so they can never reach a real inbox.
 #
@@ -58,6 +69,13 @@ SAFE_EMAIL_DOMAINS = (
 def fixture_calendars() -> list[Path]:
     """Every .ics committed under tests/fixtures/."""
     return sorted(FIXTURES.rglob("*.ics"))
+
+
+####################################################################
+#
+def fixture_exports() -> list[Path]:
+    """Every .json committed under tests/fixtures/."""
+    return sorted(FIXTURES.rglob("*.json"))
 
 
 ########################################################################
@@ -100,6 +118,29 @@ class TestCommittedFixturesAreSynthetic:
                 uid.endswith(f"@{SYNTHETIC_UID_DOMAIN}"),
                 f"UID domain in {path.name}",
             )
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize("path", fixture_exports(), ids=lambda p: p.name)
+    def test_an_export_fixture_carries_the_synthetic_marker(
+        self, path: Path
+    ) -> None:
+        """
+        GIVEN: a GDPR-export-shaped .json committed under tests/fixtures/
+        WHEN:  its top level is read
+        THEN:  it carries the generator's marker, which a real export
+               cannot
+
+        With no such fixture committed this reports as skipped rather
+        than passed, which is the honest outcome -- and it fires the
+        moment one appears.
+        """
+        document = json.loads(path.read_text(encoding="utf-8"))
+
+        assert isinstance(document, dict), f"{path.name} is not an object"
+        assert document.get(SYNTHETIC_MARKER) == SYNTHETIC_MARKER_VALUE, (
+            f"{path.name} carries no generated-export marker"
+        )
 
     ####################################################################
     #
@@ -151,7 +192,7 @@ class TestCommittedFixturesAreSynthetic:
 #
 class TestNoOverlapWithTheRealExport:
     """
-    Runs only where from_tripit/ is present, and says so when it is not.
+    Runs only where a real export is configured, and says so otherwise.
 
     A skip is the honest outcome here: the check has no input, and
     reporting a pass would be a lie about what was verified.
@@ -159,25 +200,33 @@ class TestNoOverlapWithTheRealExport:
 
     ####################################################################
     #
-    @pytest.fixture(autouse=True)
-    def _needs_the_real_export(self) -> None:
-        """Skip loudly rather than pass vacuously."""
-        if not REAL_EXPORT.is_dir() or not any(REAL_EXPORT.glob("*.ics")):
+    @pytest.fixture
+    def real_export(self) -> Path:
+        """The configured export, or a loud skip rather than a vacuous pass."""
+        configured = os.environ.get(REAL_EXPORT_ENV, "")
+        if not configured:
             pytest.skip(
-                f"{REAL_EXPORT} is absent -- reference material is never "
+                f"{REAL_EXPORT_ENV} is unset -- reference material is never "
                 "committed, so this check cannot run here"
             )
+        export = Path(configured)
+        if not export.is_dir() or not any(export.glob("*.ics")):
+            pytest.skip(
+                f"{REAL_EXPORT_ENV} does not name a directory of "
+                "calendars, so this check cannot run here"
+            )
+        return export
 
     ####################################################################
     #
-    def test_no_fixture_reuses_a_real_uid(self) -> None:
+    def test_no_fixture_reuses_a_real_uid(self, real_export: Path) -> None:
         """
         GIVEN: the real export alongside the committed fixtures
         WHEN:  their UIDs are compared
         THEN:  no fixture shares one, which a copied file would
         """
         real: set[str] = set()
-        for path in REAL_EXPORT.glob("*.ics"):
+        for path in real_export.glob("*.ics"):
             real.update(
                 uid_of(e)
                 for e in events_of(
@@ -193,14 +242,16 @@ class TestNoOverlapWithTheRealExport:
 
     ####################################################################
     #
-    def test_no_fixture_reuses_real_summary_text(self) -> None:
+    def test_no_fixture_reuses_real_summary_text(
+        self, real_export: Path
+    ) -> None:
         """
         GIVEN: the real export alongside the committed fixtures
         WHEN:  their event summaries are compared
         THEN:  none is shared, catching a copy whose UIDs were rewritten
         """
         real: set[str] = set()
-        for path in REAL_EXPORT.glob("*.ics"):
+        for path in real_export.glob("*.ics"):
             real.update(
                 str(e.get("SUMMARY", ""))
                 for e in events_of(
