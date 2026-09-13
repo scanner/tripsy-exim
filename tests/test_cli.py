@@ -5,6 +5,7 @@
 # system imports
 import json
 from pathlib import Path
+from typing import Any
 
 # 3rd party imports
 import pytest
@@ -191,3 +192,61 @@ class TestStage:
 
         check.equal(result.exit_code, 0, result.output)
         check.equal(len(Archive(archive_root).trip_keys()), 1)
+
+
+########################################################################
+########################################################################
+#
+class TestImportCommand:
+    """Tests for the `import` subcommand."""
+
+    ####################################################################
+    #
+    def test_a_dry_run_sends_nothing_and_needs_no_credentials(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """
+        GIVEN: a staged archive and no credentials anywhere
+        WHEN:  import is run without --write
+        THEN:  the plan is printed and nothing is sent
+
+        The plan is what a person reads before the one step that cannot
+        be undone, so it must not require an account to see.
+        """
+        for name in (
+            "TRIPSY_USERNAME",
+            "TRIPSY_PASSWORD",
+            "TRIPSY_ONEPASSWORD_URL",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        export = write_export(tmp_path, b.trip(objects=[b.flight()]))
+        archive_root = tmp_path / "archive"
+        runner.invoke(
+            main,
+            ["stage-export", str(export), "--archive", str(archive_root)],
+        )
+
+        result = runner.invoke(main, ["import", "--archive", str(archive_root)])
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_in("Dry run", result.output)
+        check.is_in("Nothing was sent", result.output)
+
+    ####################################################################
+    #
+    def test_an_empty_archive_is_refused(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """
+        GIVEN: an archive holding no staged trips
+        WHEN:  import is run
+        THEN:  it fails saying so, rather than reporting a run of nothing
+        """
+        empty = tmp_path / "archive"
+        empty.mkdir()
+
+        result = runner.invoke(main, ["import", "--archive", str(empty)])
+
+        check.not_equal(result.exit_code, 0)
+        check.is_in("no staged trips", result.output)

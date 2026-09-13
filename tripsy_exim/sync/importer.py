@@ -1,0 +1,463 @@
+#!/usr/bin/env python
+#
+"""
+Writing staged trips into Tripsy.
+
+A run plans before it writes.  The plan says what would be created, what
+already exists, and the order a trip's objects would take; the write path
+then executes exactly that plan.  Both read the same archive, so a dry run
+is the same computation as the real one with the POSTs left out.
+
+Two properties of the API shape the design.
+
+An identifier is never released.  A create whose `internal_identifier` is
+already taken answers an empty 200 and writes nothing, which is what makes
+a re-run a no-op and a resumed run free.  It also means a mistake cannot
+be taken back, so the plan exists to be read first.
+
+`sort_order` is one dense sequence across a whole trip -- activities,
+hostings and transportations share it -- and the server computes nothing,
+leaving every object on 0 when it is absent.  A trip is therefore numbered
+here, chronologically, before anything is sent.  The number an object gets
+on its first create is the number it keeps: a re-run resolves to the
+existing object rather than updating it, so inserting an object later and
+re-running leaves its siblings stale.  Renumbering after the fact is a
+PATCH pass, not something a re-run does on its own.
+"""
+
+# system imports
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# Project imports
+from tripsy_exim.api import (
+    BadRequest,
+    Created,
+    MethodNotAllowed,
+    NotFound,
+    TripsyClient,
+)
+from tripsy_exim.models import (
+    Activity,
+    CanonicalModel,
+    Hosting,
+    Transportation,
+    Trip,
+)
+from tripsy_exim.store import Archive
+from tripsy_exim.sync.overrides import MODEL_FOR_COLLECTION
+
+# The order collections are written in.  Lodging and travel first, so a
+# partial run leaves a trip with its skeleton rather than its trimmings.
+#
+COLLECTION_ORDER: tuple[str, ...] = (
+    "transportations",
+    "hostings",
+    "activities",
+)
+
+Child = Activity | Hosting | Transportation
+
+
+####################################################################
+#
+def instant_of(obj: CanonicalModel) -> datetime | None:
+    """
+    When an object begins, whichever field its kind uses for that.
+
+    Args:
+        obj: A staged child object.
+
+    Returns:
+        The start instant, or None for an object carrying no time.
+    """
+    if isinstance(obj, Transportation):
+        return obj.departure_at
+    return getattr(obj, "starts_at", None)
+
+
+####################################################################
+#
+def zone_of(obj: CanonicalModel) -> str | None:
+    """
+    The zone an object's start was expressed in.
+
+    Every instant is stored in UTC, so a plan rendered without this reads
+    a Tokyo morning as the previous afternoon.  The plan is what a person
+    checks before the one irreversible step, so it is rendered in the
+    traveller's own time.
+
+    Args:
+        obj: A staged child object.
+
+    Returns:
+        An IANA zone name, or None when the object carries none.
+    """
+    if isinstance(obj, Transportation):
+        return obj.departure_timezone
+    return getattr(obj, "timezone", None)
+
+
+########################################################################
+########################################################################
+#
+@dataclass(frozen=True)
+class PlannedObject:
+    """One child object as the plan sees it."""
+
+    collection: str
+    identifier: str
+    name: str
+    sort_order: int
+    starts_at: datetime | None
+    type_value: str | None
+    timezone: str | None = None
+
+    ####################################################################
+    #
+    @property
+    def when(self) -> str:
+        """The instant in local time, for a plan a person reads."""
+        if self.starts_at is None:
+            return "no date"
+        local = self.starts_at
+        if self.timezone:
+            try:
+                local = local.astimezone(ZoneInfo(self.timezone))
+            except ZoneInfoNotFoundError:
+                pass
+        return local.strftime("%Y-%m-%d %H:%M")
+
+
+########################################################################
+########################################################################
+#
+@dataclass
+class TripPlan:
+    """What a run would do to one trip, computed without writing."""
+
+    trip_key: str
+    name: str
+    identifier: str
+    objects: list[PlannedObject] = field(default_factory=list)
+
+    ####################################################################
+    #
+    @property
+    def total(self) -> int:
+        """How many child objects the trip would write."""
+        return len(self.objects)
+
+    ####################################################################
+    #
+    @property
+    def untyped(self) -> list[PlannedObject]:
+        """
+        Transportations carrying no type.
+
+        Tripsy draws an untyped leg without an icon, so these are worth a
+        person's eye before a run rather than after.  A single field, and
+        a PATCH fixes one afterwards.
+        """
+        return [
+            obj
+            for obj in self.objects
+            if obj.collection == "transportations" and not obj.type_value
+        ]
+
+    ####################################################################
+    #
+    @property
+    def undated(self) -> list[PlannedObject]:
+        """Objects with no instant, which sort to the end of the trip."""
+        return [obj for obj in self.objects if obj.starts_at is None]
+
+
+########################################################################
+########################################################################
+#
+@dataclass
+class TripImport:
+    """What a run actually did to one trip."""
+
+    trip_key: str
+    name: str
+    trip_id: int | None = None
+    trip_created: bool = False
+    created: int = 0
+    existing: int = 0
+    failed: list[str] = field(default_factory=list)
+
+    ####################################################################
+    #
+    @property
+    def total(self) -> int:
+        """Children accounted for, however they were accounted for."""
+        return self.created + self.existing + len(self.failed)
+
+
+####################################################################
+#
+def staged_children(archive: Archive, trip_key: str) -> Iterator[Child]:
+    """
+    Read every child object of a staged trip off disk.
+
+    Args:
+        archive: The archive holding the trip.
+        trip_key: Key of the trip to read.
+
+    Yields:
+        One object at a time, collection by collection.
+    """
+    for collection in COLLECTION_ORDER:
+        model = MODEL_FOR_COLLECTION[collection]
+        directory = archive.trip_dir(trip_key) / collection
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            obj = archive.read(model, path)
+            if obj is not None:
+                yield obj  # type: ignore[misc]
+
+
+####################################################################
+#
+def staged_trip(archive: Archive, trip_key: str) -> Trip | None:
+    """Read the trip record itself, or None when there is none."""
+    return archive.read(Trip, archive.trip_dir(trip_key) / "trip.json")
+
+
+####################################################################
+#
+def numbered(objects: list[Child]) -> list[tuple[int, Child]]:
+    """
+    Put a trip's objects in the order the app shows them.
+
+    One sequence covers the whole trip across all three collections,
+    earliest first, and objects carrying no instant go to the end -- which
+    is where the app puts its own.  Ties and undated objects fall back to
+    the identifier, so numbering one trip twice gives one answer.
+
+    Args:
+        objects: Every child object of one trip.
+
+    Returns:
+        Pairs of `sort_order` and object, in that order, numbered from 1.
+    """
+
+    def key(obj: Child) -> tuple[int, str, str]:
+        when = instant_of(obj)
+        return (
+            1 if when is None else 0,
+            when.isoformat() if when else "",
+            str(obj.internal_identifier or ""),
+        )
+
+    return list(enumerate(sorted(objects, key=key), start=1))
+
+
+####################################################################
+#
+def plan_trip(archive: Archive, trip_key: str) -> TripPlan:
+    """
+    Work out what importing one staged trip would do.
+
+    Nothing is written and nothing is sent.  The `sort_order` values in
+    the plan are the ones a real run would send, because both come from
+    this function.
+
+    Args:
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to plan.
+
+    Returns:
+        The plan for that trip.
+
+    Raises:
+        ValueError: The trip has no `trip.json`, so it is not staged.
+    """
+    trip = staged_trip(archive, trip_key)
+    if trip is None:
+        raise ValueError(f"{trip_key} carries no trip record")
+
+    plan = TripPlan(
+        trip_key=trip_key,
+        name=str(trip.name or ""),
+        identifier=str(trip.internal_identifier or ""),
+    )
+
+    children = list(staged_children(archive, trip_key))
+    for order, obj in numbered(children):
+        collection = _collection_of(obj)
+        plan.objects.append(
+            PlannedObject(
+                collection=collection,
+                identifier=str(obj.internal_identifier or ""),
+                name=str(obj.name or ""),
+                sort_order=order,
+                starts_at=instant_of(obj),
+                type_value=_type_of(obj),
+                timezone=zone_of(obj),
+            )
+        )
+    return plan
+
+
+####################################################################
+#
+def import_trip(
+    client: TripsyClient, archive: Archive, trip_key: str
+) -> TripImport:
+    """
+    Write one staged trip to Tripsy.
+
+    The trip is created first and its id resolved, then its children in
+    `sort_order`.  An object whose identifier is already taken is counted
+    as existing rather than retried: the API suppressed it, which is what
+    makes a second run of this function a no-op.
+
+    Args:
+        client: An authenticated client.
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to write.
+
+    Returns:
+        What was created, what was already there, and what failed.
+
+    Raises:
+        ValueError: The trip is not staged, or Tripsy accepted the trip
+            but no id could be resolved for it -- without one there is
+            nothing to hang children off.
+    """
+    trip = staged_trip(archive, trip_key)
+    if trip is None:
+        raise ValueError(f"{trip_key} carries no trip record")
+
+    identifier = str(trip.internal_identifier or "")
+    result = TripImport(trip_key=trip_key, name=str(trip.name or ""))
+
+    outcome = client.create_trip(trip.writable_payload())
+    if isinstance(outcome, Created):
+        result.trip_created = True
+        result.trip_id = outcome.payload.get("id")
+
+    if result.trip_id is None:
+        # The trip was already there, so the create answered an empty 200
+        # carrying no id.  A run that reached this trip before recorded
+        # the id, which saves listing the whole account once per trip on
+        # a resumed run of a hundred.
+        #
+        result.trip_id = _recall(archive, identifier)
+
+    if result.trip_id is None:
+        result.trip_id = client.trip_ids_by_identifier().get(identifier)
+
+    if result.trip_id is None:
+        raise ValueError(
+            f"{trip_key}: no trip id for {identifier!r} after the create"
+        )
+
+    _remember(archive, identifier, result.trip_id)
+
+    children = list(staged_children(archive, trip_key))
+    for order, obj in numbered(children):
+        collection = _collection_of(obj)
+        payload = obj.writable_payload()
+        payload["sort_order"] = order
+        try:
+            written = client.create_child(result.trip_id, collection, payload)
+        except (BadRequest, NotFound, MethodNotAllowed) as exc:
+            # One object the server would not take.  The rest of the trip
+            # is unaffected, so it is recorded and the run goes on.
+            # Anything else -- a refused token, a service that stopped
+            # answering, a throttle the pacer could not ride out -- is
+            # about the run rather than this object, and propagates:
+            # collecting it per object would spend a trip's identifiers
+            # while reporting a completed run.
+            #
+            result.failed.append(
+                f"{collection}/{obj.internal_identifier}: {exc!r}"
+            )
+            continue
+
+        if isinstance(written, Created):
+            result.created += 1
+        else:
+            result.existing += 1
+
+    return result
+
+
+####################################################################
+#
+def child_ids_by_identifier(
+    client: TripsyClient, trip_id: int, collection: str
+) -> dict[str, int]:
+    """
+    Map a collection's `internal_identifier` values to their ids.
+
+    A duplicate create answers an empty 200 carrying no id, and there is
+    no child equivalent of `trip_ids_by_identifier`, so resolving one
+    means reading the collection back.  Needed to correct an object that
+    is already there -- a retype, or a `sort_order` repair -- rather than
+    to create it.
+
+    Args:
+        client: An authenticated client.
+        trip_id: The trip the collection belongs to.
+        collection: One of the plural collection names.
+
+    Returns:
+        Identifiers to ids, skipping objects carrying no identifier.
+    """
+    found: dict[str, int] = {}
+    for obj in client.iter_children(
+        trip_id, collection, fields=["id", "internal_identifier"]
+    ):
+        key = obj.get("internal_identifier")
+        if key and obj.get("id") is not None:
+            found[str(key)] = int(obj["id"])
+    return found
+
+
+####################################################################
+#
+def _collection_of(obj: CanonicalModel) -> str:
+    """The plural collection name an object belongs in."""
+    for name, model in MODEL_FOR_COLLECTION.items():
+        if type(obj) is model:
+            return name
+    raise ValueError(f"no collection for {type(obj).__name__}")
+
+
+####################################################################
+#
+def _type_of(obj: CanonicalModel) -> str | None:
+    """The Tripsy type string an object carries, whichever field holds it."""
+    for name in ("transportation_type", "activity_type", "room_type"):
+        value = getattr(obj, name, None)
+        if value:
+            return str(value)
+    return None
+
+
+####################################################################
+#
+def _recall(archive: Archive, identifier: str) -> int | None:
+    """The trip id an earlier run recorded for this identifier, if any."""
+    cache = archive.read_manifest().get("identifier_cache") or {}
+    found = cache.get(identifier)
+    return int(found) if found is not None else None
+
+
+####################################################################
+#
+def _remember(archive: Archive, identifier: str, trip_id: int) -> None:
+    """Record a trip's id in the manifest, so a later run need not ask."""
+    manifest: dict[str, Any] = archive.read_manifest()
+    cache = manifest.setdefault("identifier_cache", {})
+    cache[identifier] = trip_id
+    archive.write_manifest(manifest)

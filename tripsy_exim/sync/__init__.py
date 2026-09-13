@@ -17,6 +17,18 @@ from tripsy_exim.sync.enrich import (
     Match,
     enrich,
 )
+from tripsy_exim.sync.importer import (
+    COLLECTION_ORDER,
+    PlannedObject,
+    TripImport,
+    TripPlan,
+    child_ids_by_identifier,
+    import_trip,
+    numbered,
+    plan_trip,
+    staged_children,
+    staged_trip,
+)
 from tripsy_exim.sync.overrides import (
     OVERRIDES_DIRNAME,
     Applied,
@@ -41,6 +53,7 @@ from tripsy_exim.sync.staging import (
 )
 
 __all__ = [
+    "COLLECTION_ORDER",
     "OVERRIDES_DIRNAME",
     "REPORT_FILENAME",
     "TRIP_INDEX",
@@ -50,16 +63,25 @@ __all__ = [
     "Match",
     "Override",
     "OverrideSet",
+    "PlannedObject",
     "StagedTrip",
+    "TripImport",
+    "TripPlan",
     "TripAlreadyArchived",
     "archived_trips",
     "apply_overrides",
+    "child_ids_by_identifier",
     "enrich",
+    "import_trip",
+    "numbered",
+    "plan_trip",
     "load_overrides",
     "overrides_path",
     "retyped",
     "save_overrides",
     "stage",
+    "staged_children",
+    "staged_trip",
     "stage_export",
     "stage_export_file",
     "stage_file",
