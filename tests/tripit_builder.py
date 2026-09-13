@@ -241,13 +241,15 @@ def untyped_transport(
     *,
     name: str = "Transportation",
     day: str = "2024-05-02",
-    carrier: str = "Example Cable Car",
+    carrier: str = "Example Operator",
 ) -> dict[str, Any]:
     """
     A transport segment carrying nothing that says what kind it is.
 
-    No airport code, no station, no type code -- which is every cable
-    car, shuttle and sightseeing boat in a real export.
+    No airport code, no station, no type code, and an operator whose
+    name settles nothing either.  A real export's untyped legs are
+    mostly recognisable from the carrier -- a cable car, a city bus, a
+    lake cruise -- so one that is not takes a name matching no rule.
     """
     return {
         "display_name": name,

@@ -509,6 +509,7 @@ class TestArchiveResolution:
 
     ####################################################################
     #
+    @pytest.mark.uses_dotenv
     def test_dot_env_names_the_archive(
         self,
         runner: CliRunner,

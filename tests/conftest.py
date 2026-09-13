@@ -108,6 +108,36 @@ def _seed_random_data(faker_seed: int) -> None:
 
 ####################################################################
 #
+@pytest.fixture(autouse=True)
+def _no_real_credentials(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """
+    Keep the suite away from a real account and a real secret store.
+
+    The command line loads `.env` from the working directory on every
+    invocation, and a test run from the project root would find the
+    developer's own.  One that reached the upload path then ran `op`
+    against their 1Password and authenticated against the live API --
+    which is how it was found: macOS asked for permission to drive
+    another application in the middle of a test run.
+
+    So `.env` is not read during tests and no TRIPSY_ variable survives
+    into one.  A test wanting credentials sets them itself, and one that
+    is *about* `.env` marks itself `uses_dotenv` -- it still gets a clean
+    environment, and the file it reads is one it wrote in a tmp_path.
+    """
+    if not request.node.get_closest_marker("uses_dotenv"):
+        monkeypatch.setattr(
+            "tripsy_exim.cli.load_dotenv", lambda *a, **k: False
+        )
+    for name in list(os.environ):
+        if name.startswith("TRIPSY_"):
+            monkeypatch.delenv(name, raising=False)
+
+
+####################################################################
+#
 @pytest.fixture
 def archive(tmp_path: Path) -> Archive:
     """An empty archive rooted in a temporary directory."""
