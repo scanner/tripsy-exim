@@ -54,6 +54,7 @@ from icalendar import Calendar, Component
 
 # Project imports
 from tripsy_exim.models import Activity, Hosting, Transportation, Trip, mint
+from tripsy_exim.sources.join import key_from_calendar
 from tripsy_exim.sources.timezones import zone_for
 
 # Names the key an identifier is minted from, not the file it arrived in.
@@ -142,6 +143,12 @@ class ParsedCalendar:
     activities: list[Activity] = field(default_factory=list)
     transportations: list[Transportation] = field(default_factory=list)
     notes: list[EventNote] = field(default_factory=list)
+
+    # How this trip is recognised in the other source.  Set by whichever
+    # parser produced it, so a consumer matches trips without knowing
+    # which source it is holding.  None when the trip cannot be keyed.
+    #
+    join_key: str | None = None
 
     ####################################################################
     #
@@ -391,10 +398,20 @@ def _build(
         if all_day:
             source["x_all_day"] = "TRUE"
 
-        # A VEVENT carries one LOCATION and one GEO, so only one end of a
-        # leg can be filled.  Departure is the defensible half: it is where
-        # the traveller is when the event begins, and it is what an
-        # itinerary sorts by.
+        # A VEVENT carries one LOCATION and one GEO, and TripIt puts the
+        # *destination* there.  Measured against the GDPR export: of 163
+        # comparable flight events, every one sits nearer the arrival
+        # airport than the departure, and none within 490km of the
+        # departure.  The derived zone follows the same coordinates, so
+        # it is the arrival's too.
+        #
+        # The point is the destination *city*, not its airport -- the
+        # offset runs to a median of 18km and reaches 63km for Tokyo
+        # Narita -- so it places a leg rather than pinpointing it.
+        #
+        # That leaves the departure end empty, which is honest: the
+        # calendar does not say where a leg begins.  The instants are
+        # unaffected, being written in UTC.
         #
         built = Transportation(
             internal_identifier=identifier,
@@ -403,10 +420,10 @@ def _build(
             transportation_type="airplane",
             departure_at=starts,
             arrival_at=ends,
-            departure_timezone=zone,
-            departure_address=common["address"],
-            departure_latitude=common.get("latitude"),
-            departure_longitude=common.get("longitude"),
+            arrival_timezone=zone,
+            arrival_address=common["address"],
+            arrival_latitude=common.get("latitude"),
+            arrival_longitude=common.get("longitude"),
         )
     else:
         built = Activity(
@@ -452,8 +469,12 @@ def parse(text: str, namespace: str = TRIPIT_UID_NAMESPACE) -> ParsedCalendar:
         else:
             items.append(event)
 
+    trip = _build_trip(calendar, trip_event, items, namespace)
     parsed = ParsedCalendar(
-        trip=_build_trip(calendar, trip_event, items, namespace)
+        trip=trip,
+        join_key=key_from_calendar(
+            _text(calendar, "X-WR-CALDESC"), trip.starts_at, trip.ends_at
+        ),
     )
 
     zones = _zones_for(items)

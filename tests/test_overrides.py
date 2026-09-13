@@ -57,7 +57,12 @@ class TestRetyped:
         """
         GIVEN: an activity with a start, an end and a place
         WHEN:  it is retyped as a transportation
-        THEN:  its time and place land on the departure and arrival
+        THEN:  its times bracket the leg and its place is the arrival
+
+        The place is the destination because that is what the source
+        carries: a TripIt calendar's LOCATION and GEO name where the leg
+        ends, measured across the whole reference corpus.  A journey
+        named for both ends still only records one of them.
         """
         activity = Activity(
             internal_identifier="txim-x",
@@ -65,15 +70,16 @@ class TestRetyped:
             starts_at=datetime(2027, 1, 1, 9, tzinfo=UTC),
             ends_at=datetime(2027, 1, 1, 11, tzinfo=UTC),
             timezone="Asia/Tokyo",
-            address="Tokyo Station",
+            address="Kyoto Station",
         )
 
         moved = retyped(activity, Transportation)
 
         check.equal(moved.departure_at, activity.starts_at)
         check.equal(moved.arrival_at, activity.ends_at)
-        check.equal(moved.departure_timezone, "Asia/Tokyo")
-        check.equal(moved.departure_address, "Tokyo Station")
+        check.equal(moved.arrival_timezone, "Asia/Tokyo")
+        check.equal(moved.arrival_address, "Kyoto Station")
+        check.is_none(moved.departure_address, "the origin is not recorded")
 
     ####################################################################
     #

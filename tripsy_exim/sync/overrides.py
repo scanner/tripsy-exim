@@ -43,13 +43,20 @@ MODEL_FOR_COLLECTION: dict[str, type[CanonicalModel]] = {
 # between the two shapes reads this correspondence in whichever direction
 # the retype runs.
 #
+# The place goes to the arrival half.  A source event carries one place,
+# and where that place is has been measured: TripIt's calendars put the
+# destination there.  The parser files a transport event the same way, so
+# a retyped activity and a directly parsed leg end up alike rather than
+# a field apart.  A GDPR export offers no evidence either way, and one
+# consistent rule beats two.
+#
 _SPLIT_FIELDS: dict[str, str] = {
     "starts_at": "departure_at",
     "ends_at": "arrival_at",
-    "timezone": "departure_timezone",
-    "address": "departure_address",
-    "latitude": "departure_latitude",
-    "longitude": "departure_longitude",
+    "timezone": "arrival_timezone",
+    "address": "arrival_address",
+    "latitude": "arrival_latitude",
+    "longitude": "arrival_longitude",
 }
 
 # Carried across any retype, because every kind holds them alike.

@@ -261,25 +261,34 @@ class TestClassification:
 
     ####################################################################
     #
-    def test_a_flight_is_typed_and_fills_only_its_departure(
-        self, faker: Faker
-    ) -> None:
+    def test_a_flight_places_its_geo_at_the_arrival(self, faker: Faker) -> None:
         """
         GIVEN: a flight event with one LOCATION and one GEO
         WHEN:  it becomes a transportation
-        THEN:  the departure half is filled and the arrival half is left
-               empty, because a VEVENT carries only one place and
-               inventing the other end would be a fabrication
+        THEN:  the arrival half is filled and the departure half is left
+               empty
+
+        TripIt puts the destination in those properties.  Measured
+        against the GDPR export, every one of 163 comparable flight
+        events sits nearer the arrival airport than the departure, none
+        within 490km of the departure, and the zone derived from the same
+        coordinates matched the arrival's in every case.  Filling the
+        departure instead put every leg in the wrong place.
+
+        The point is the destination city rather than its airport, so it
+        places a leg within a few tens of kilometres and no closer.  The
+        instants are unaffected either way: TripIt writes them in UTC.
         """
         parsed = parse(calendar_text(faker, items=1, flights=1, landmark=TOKYO))
         leg = parsed.transportations[0]
 
         check.equal(leg.transportation_type, "airplane", "typed")
         check.is_not_none(leg.departure_at, "departure instant")
-        check.equal(leg.departure_timezone, "Asia/Tokyo", "departure zone")
-        check.is_not_none(leg.departure_address, "departure address")
-        check.is_none(leg.arrival_address, "arrival left empty")
-        check.is_none(leg.arrival_timezone, "and unzoned")
+        check.is_not_none(leg.arrival_at, "arrival instant")
+        check.equal(leg.arrival_timezone, "Asia/Tokyo", "arrival zone")
+        check.is_not_none(leg.arrival_address, "arrival address")
+        check.is_none(leg.departure_address, "departure left empty")
+        check.is_none(leg.departure_timezone, "and unzoned")
 
 
 ########################################################################
@@ -439,10 +448,19 @@ class TestTripEnvelope:
         THEN:  the trip is named from the calendar and dated from the
                trip-level event, as plain dates needing no zone
         """
-        parsed = parse(calendar_text(faker, items=4, start=date(2027, 6, 1)))
+        parsed = parse(
+            calendar_text(
+                faker, items=4, start=date(2027, 6, 1), name="Kyoto, May 2027"
+            )
+        )
 
+        # TripIt wraps the trip name in the calendar owner's, so the
+        # property is not the trip's name on its own.  The parser stores
+        # it verbatim; pulling the trip's own name out is the join key's
+        # job, off X-WR-CALDESC.
+        #
         check.is_true(
-            parsed.trip.name and parsed.trip.name.startswith("Trip to"),
+            parsed.trip.name and "Kyoto, May 2027" in parsed.trip.name,
             "named from X-WR-CALNAME",
         )
         check.is_not_none(parsed.trip.description, "and described")
