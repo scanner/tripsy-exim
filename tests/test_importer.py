@@ -550,6 +550,32 @@ class TestMerge:
 
     ####################################################################
     #
+    def test_a_trip_holding_one_record_twice_sends_it_once(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: one trip carrying the same journey twice
+        WHEN:  it is planned
+        THEN:  the journey is planned once, and counted as skipped
+
+        A source can record one train twice, and two objects alike in
+        kind, instant and label are alike to a reader of the app too --
+        so a second one puts a duplicate on the itinerary rather than
+        recording anything the first does not.
+        """
+        stage_export(
+            archive,
+            b.export(b.trip(objects=[b.rail(), b.rail(), b.restaurant()])),
+        )
+
+        plan = plan_trip(archive, archive.trip_keys()[0])
+
+        check.equal(plan.duplicates, 1, "the second copy was skipped")
+        legs = [o for o in plan.objects if o.collection == "transportations"]
+        check.equal(len(legs), 1, "and planned once")
+
+    ####################################################################
+    #
     def test_a_merged_trip_spans_what_it_absorbs(
         self, archive: Archive
     ) -> None:

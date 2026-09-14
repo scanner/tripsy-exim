@@ -833,9 +833,10 @@ def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
 
     An absorbed trip can hold the same object as the trip absorbing it --
     two travellers on one flight each carry that flight -- so an object
-    the target already has is left out.  Identifiers cannot catch this:
-    they are derived per trip, so the same flight in two records mints
-    two of them and both would be created.
+    the target already has is left out, and so is one the target holds
+    twice itself.  Identifiers cannot catch either: they are derived per
+    record, so one journey written down twice mints two of them and both
+    would be created.
 
     Args:
         archive: The archive holding the staged trips.
@@ -845,16 +846,33 @@ def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
         The objects to upload, and how many duplicates were left out.
     """
     fixes = corrections(archive, trip_key)
-    objects = [
+    own = [
         corrected(obj, fixes[str(obj.internal_identifier)])
         if str(obj.internal_identifier) in fixes
         else obj
         for obj in staged_children(archive, trip_key)
     ]
-    objects.extend(added(archive, trip_key))
-    seen = {_fingerprint(obj) for obj in objects}
+    own.extend(added(archive, trip_key))
 
     duplicates = 0
+    seen: set[tuple[str, str, str]] = set()
+    objects: list[Child] = []
+
+    # A trip is deduplicated against itself as well as against what it
+    # absorbs.  One source can hold the same record twice -- the same
+    # train, the same minute, the same label, booked twice or shared in
+    # twice -- and two objects alike in all three are alike to a reader
+    # of the app too, so carrying both puts a duplicate on the itinerary
+    # rather than recording anything the first does not.
+    #
+    for obj in own:
+        mark = _fingerprint(obj)
+        if mark in seen:
+            duplicates += 1
+            continue
+        seen.add(mark)
+        objects.append(obj)
+
     for absorbed in absorbed_by(archive, trip_key):
         others = corrections(archive, absorbed)
         for obj in [
