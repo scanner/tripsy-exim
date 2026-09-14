@@ -12,6 +12,7 @@ import pytest
 import pytest_check as check
 from click.testing import CliRunner
 from faker import Faker
+from pytest_mock import MockerFixture
 
 # Project imports
 from tests import tripit_builder as b
@@ -602,27 +603,37 @@ class TestArchiveResolution:
         runner: CliRunner,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
     ) -> None:
         """
-        GIVEN: an archive directory that cannot be read
+        GIVEN: an archive whose directory cannot be read
         WHEN:  a command that reads the archive runs
         THEN:  it says so rather than raising out of a directory walk
 
         macOS refuses a folder under Documents to a process it has not
         been told to trust, and a scheduled run has nobody to ask.
+
+        The refusal is provoked rather than staged.  Making a real
+        directory unreadable tests the operating system, not this code:
+        root ignores the mode bits and so do some filesystems, so the
+        same test means different things in different places.  What is
+        ours is the one branch -- that an OSError out of the archive
+        becomes a message.
         """
         root = tmp_path / "locked"
         (root / "trips").mkdir(parents=True)
-        (root / "trips").chmod(0o000)
         monkeypatch.setenv(ARCHIVE_ENV, str(root))
+        mocker.patch.object(
+            Archive,
+            "trip_keys",
+            side_effect=PermissionError(13, "Permission denied"),
+        )
 
-        try:
-            result = runner.invoke(main, ["list"])
-        finally:
-            (root / "trips").chmod(0o755)
+        result = runner.invoke(main, ["list"])
 
         check.not_equal(result.exit_code, 0)
         check.is_in("cannot read the archive", result.output)
+        check.is_in("Permission denied", result.output)
         check.is_not_instance(result.exception, OSError, "reported, not raised")
 
     ####################################################################
