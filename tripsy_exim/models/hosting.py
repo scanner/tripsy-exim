@@ -40,6 +40,7 @@ class Hosting(CanonicalModel):
             "google_places_id",
             "price",
             "currency",
+            "sort_order",
         }
     )
 
@@ -67,6 +68,14 @@ class Hosting(CanonicalModel):
     google_places_id: str | None = None
     price: Money | None = None
     currency: str | None = None
+
+    # One dense sequence across a whole trip rather than per collection:
+    # activities, hostings and transportations share it, and the app
+    # renders a trip in it.  The API stores what it is given and computes
+    # nothing, so an object created without one holds 0 -- verified
+    # 2026-09-12.  The importer numbers a trip chronologically.
+    #
+    sort_order: int | None = None
 
     # Read-only.  `price` and `currency` above are withheld entirely when
     # the caller cannot see expenses, which is what merge-on-set protects.

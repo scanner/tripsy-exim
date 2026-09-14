@@ -11,6 +11,7 @@ from typing import Any
 # 3rd party imports
 import pytest
 import pytest_check as check
+from faker import Faker
 from pydantic import ValidationError
 
 # Project imports
@@ -115,31 +116,47 @@ class TestPassthrough:
     ####################################################################
     #
     def test_wire_and_source_extras_stay_separable(
-        self, hosting_payload_factory: Callable[..., dict[str, Any]]
+        self,
+        faker: Faker,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: a hosting carrying both undocumented Tripsy fields and a
                source field Tripsy has nowhere to put
         WHEN:  its passthrough views are read
         THEN:  both are retained and the two remain distinguishable
+
+        The values are generated and named once, so what goes in is what
+        is looked for afterwards.  A literal repeated in both halves can
+        agree with itself while the code drops the field entirely.
         """
+        unique_identifier = faker.pystr(min_chars=12, max_chars=12)
+        icon = faker.word()
+        segment_id = str(faker.uuid4())
         hosting = Hosting.model_validate(
-            hosting_payload_factory(sort_order=3, custom_icon="bed")
-        ).with_source(tripit_segment_id="abc-123")
+            hosting_payload_factory(
+                tripsy_unique_identifier=unique_identifier, custom_icon=icon
+            )
+        ).with_source(tripit_segment_id=segment_id)
 
         check.equal(
             hosting.wire_extras,
-            {"sort_order": 3, "custom_icon": "bed"},
+            {
+                "tripsy_unique_identifier": unique_identifier,
+                "custom_icon": icon,
+            },
             "undocumented Tripsy fields",
         )
         check.equal(
             hosting.source_extras,
-            {"tripit_segment_id": "abc-123"},
+            {"tripit_segment_id": segment_id},
             "source-only fields",
         )
         check.equal(
-            hosting.model_dump(exclude_unset=True).get("sort_order"),
-            3,
+            hosting.model_dump(exclude_unset=True).get(
+                "tripsy_unique_identifier"
+            ),
+            unique_identifier,
             "extras take part in a dump",
         )
 
@@ -168,8 +185,33 @@ class TestWritablePayload:
 
     ####################################################################
     #
+    @pytest.mark.parametrize(
+        "model",
+        [Activity, Hosting, Transportation],
+        ids=lambda m: m.__name__.lower(),
+    )
+    def test_sort_order_is_writable_on_every_child(
+        self, model: type[Activity | Hosting | Transportation]
+    ) -> None:
+        """
+        GIVEN: a child object carrying a sort_order
+        WHEN:  a write payload is built
+        THEN:  the value is sent
+
+        One sequence covers a whole trip across all three collections, and
+        the API computes nothing when the field is absent, so the importer
+        has to supply it or every object lands on 0.
+        """
+        obj = model(internal_identifier="txim-test-g01-abc", sort_order=7)
+
+        check.equal(obj.writable_payload().get("sort_order"), 7)
+
+    ####################################################################
+    #
     def test_payload_carries_only_writable_fields(
-        self, hosting_payload_factory: Callable[..., dict[str, Any]]
+        self,
+        faker: Faker,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: a hosting carrying read-only, undocumented, and source fields
@@ -178,8 +220,10 @@ class TestWritablePayload:
                datetimes use the format the API documents
         """
         hosting = Hosting.model_validate(
-            hosting_payload_factory(sort_order=3)
-        ).with_source(tripit_segment_id="abc-123")
+            hosting_payload_factory(
+                tripsy_unique_identifier=faker.pystr(min_chars=12)
+            )
+        ).with_source(tripit_segment_id=str(faker.uuid4()))
 
         payload = hosting.writable_payload()
 
@@ -187,7 +231,9 @@ class TestWritablePayload:
         check.is_instance(payload["price"], float, "API rejects a string")
         check.equal(payload["starts_at"], "2027-06-01T14:00:00Z", "datetime")
         check.is_not_in(SOURCE_KEY, payload, "source fields withheld")
-        check.is_not_in("sort_order", payload, "wire extras withheld")
+        check.is_not_in(
+            "tripsy_unique_identifier", payload, "wire extras withheld"
+        )
         for read_only in ("id", "trip", "created_at", "updated_at"):
             check.is_not_in(read_only, payload, f"read-only {read_only}")
 

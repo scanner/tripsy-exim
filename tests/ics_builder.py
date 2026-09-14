@@ -4,8 +4,8 @@
 Generate synthetic TripIt-shaped .ics calendars.
 
 The parser is developed against these rather than against the real export
-in from_tripit/, which is reference material only and never enters the
-repository.
+kept outside the repository, which is reference material only and
+never committed.
 
 The shape is copied from a structural survey of a real export
 (probe_scripts/probe_ics.py); the content is invented here.  Two fields
@@ -176,6 +176,7 @@ def build_calendar(
     flights: int = 0,
     landmark: tuple[str, float, float] | None = None,
     start: date | None = None,
+    name: str | None = None,
 ) -> Calendar:
     """
     Build a whole trip calendar, defects included.
@@ -195,6 +196,8 @@ def build_calendar(
         flights: How many carry TripIt's flight wording.
         landmark: Fix the coordinates, to assert a derived timezone.
         start: First day of the trip.  Defaults to a fixed date.
+        name: The trip's own name, as TripIt writes it inside
+            X-WR-CALDESC.  One is invented when not given.
 
     Returns:
         An icalendar Calendar with one trip-level event and `items`
@@ -203,7 +206,7 @@ def build_calendar(
     Raises:
         ValueError: If a defect count exceeds the number of items.
     """
-    for name, count in (
+    for defect, count in (
         ("missing_geo", missing_geo),
         ("date_only", date_only),
         ("floating", floating),
@@ -212,15 +215,16 @@ def build_calendar(
         ("flights", flights),
     ):
         if count > items:
-            raise ValueError(f"{name}={count} exceeds items={items}")
+            raise ValueError(f"{defect}={count} exceeds items={items}")
 
     first = start or date(2027, 6, 1)
     calendar = Calendar()
     calendar.add("prodid", SYNTHETIC_PRODID)
     calendar.add("version", "2.0")
     calendar.add("method", "PUBLISH")
-    calendar.add("x-wr-calname", f"Trip to {faker.city()}")
-    calendar.add("x-wr-caldesc", faker.sentence())
+    trip_name = name if name is not None else f"Trip to {faker.city()}"
+    calendar.add("x-wr-calname", f"{faker.name()} (TripIt - {trip_name})")
+    calendar.add("x-wr-caldesc", f"{trip_name} (Trip Shared by {faker.name()})")
 
     # Exactly one all-day trip-level event, as every real file has.
     #

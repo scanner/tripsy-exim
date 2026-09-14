@@ -20,5 +20,10 @@ htmlcov/
 
 # Local trip archives
 archive/
+archive-*/
+
+# Real exports, in either format.  Only synthetic fixtures are committed.
 *.ics
 !tests/fixtures/**/*.ics
+*.json
+!tests/fixtures/**/*.json

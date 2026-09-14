@@ -70,7 +70,39 @@ COLLECTIONS: dict[type[CanonicalModel], str] = {
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
+# Names the archive directory when no flag does.
+#
+ARCHIVE_ENV = "TRIPSY_EXIM_ARCHIVE"
+
 M = TypeVar("M", bound=CanonicalModel)
+
+
+####################################################################
+#
+def default_root() -> Path:
+    """
+    Where the archive lives when nothing names a directory.
+
+    `TRIPSY_EXIM_ARCHIVE` overrides it, and a command line flag overrides
+    that.  The fallback follows the XDG base directory specification, so
+    an archive is not tied to the directory a command happened to be run
+    from -- it is a long-lived copy of a whole account, not a build
+    artefact.
+
+    Returns:
+        The directory the archive is read from and written to.
+    """
+    configured = os.environ.get(ARCHIVE_ENV)
+    if configured:
+        return Path(configured).expanduser()
+
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = (
+        Path(data_home).expanduser()
+        if data_home
+        else Path.home() / ".local" / "share"
+    )
+    return base / "tripsy-exim" / "archive"
 
 
 ####################################################################
@@ -282,7 +314,7 @@ class Archive:
             "kind": type(obj).__name__,
             "data": merged.model_dump(mode="json", exclude_unset=True),
         }
-        _write_json(path, document)
+        write_json(path, document)
         return path
 
     ####################################################################
@@ -383,7 +415,7 @@ class Archive:
             / kind.lower()
             / f"{quarantine_key(payload)}.json"
         )
-        _write_json(path, document)
+        write_json(path, document)
         return path
 
     ####################################################################
@@ -415,7 +447,7 @@ class Archive:
     def write_manifest(self, manifest: dict[str, Any]) -> Path:
         """Store the sync manifest."""
         manifest = {**manifest, "schema_version": ARCHIVE_SCHEMA_VERSION}
-        _write_json(self.manifest_path, manifest)
+        write_json(self.manifest_path, manifest)
         return self.manifest_path
 
     ####################################################################
@@ -445,13 +477,44 @@ class Archive:
 
 ####################################################################
 #
-def _write_json(path: Path, document: dict[str, Any]) -> None:
-    """Write JSON through a temporary file and an atomic rename."""
+def write_json(path: Path, document: dict[str, Any]) -> bool:
+    """
+    Write JSON, unless the file already holds exactly this.
+
+    Every object here is derived from its source, so re-parsing an
+    unchanged export produces the same bytes: staging a whole account
+    twice rewrote all two thousand files identically.  Rewriting is
+    invisible on disk and loud everywhere else -- a synced archive
+    uploads every file again, and a versioned one keeps a revision of
+    each -- so a write that would change nothing is skipped.
+
+    The write itself goes through a temporary file and a rename, so an
+    interrupted run leaves the previous version rather than a truncated
+    one.
+
+    Args:
+        path: The file to write.
+        document: The JSON-ready document.
+
+    Returns:
+        Whether anything was written.
+    """
+    payload = (
+        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False)
+        + "\n"
+    ).encode("utf-8")
+
+    # A file that cannot be read is one that has to be written: absent,
+    # unreadable, or holding something else all reach the same answer.
+    #
+    try:
+        if path.read_bytes() == payload:
+            return False
+    except OSError:
+        pass
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(
-        json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False)
-        + "\n",
-        encoding="utf-8",
-    )
+    tmp.write_bytes(payload)
     tmp.replace(path)
+    return True
