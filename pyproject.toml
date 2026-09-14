@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "click",
+    "geopy>=2.5.0",
     "httpx",
     "icalendar",
     "pydantic",

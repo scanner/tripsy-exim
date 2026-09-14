@@ -18,6 +18,7 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 # 3rd party imports
 import click
@@ -31,6 +32,13 @@ from tripsy_exim.api import (
     PacingProfile,
     TokenAuth,
     TripsyClient,
+)
+from tripsy_exim.geocode import (
+    Cache,
+    far_from,
+    lookup_for,
+    placed,
+    plausible,
 )
 from tripsy_exim.models import scratch_namespace
 from tripsy_exim.secrets import (
@@ -49,9 +57,11 @@ from tripsy_exim.sync.importer import (
     in_travel_order,
     merged_into,
     plan_trip,
+    positions_in,
     resolve_trip_key,
     staged_trip,
     undo_merge,
+    unplaced_in,
     upload_trip,
     uploaded_trips,
     verify_trip,
@@ -858,6 +868,227 @@ def verify_command(
             f"{unplaced} addresses carry no position yet.  Tripsy geocodes "
             "after the create, so check again before correcting any."
         )
+
+
+####################################################################
+#
+@main.command("fix-locations")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from, used to resolve "
+        f"--trip.  Defaults to ${ARCHIVE_ENV}."
+    ),
+)
+@click.option(
+    "--trip",
+    "wanted",
+    multiple=True,
+    help=(
+        "Fix only this trip, named by part of its name or by its key.  "
+        "Repeatable; default is every trip an earlier run uploaded."
+    ),
+)
+@click.option(
+    "--geocoder",
+    default="nominatim",
+    help="Which geopy service to ask.  Nominatim needs no account.",
+)
+@click.option(
+    "--api-key",
+    default=None,
+    help="Key for a geocoder that wants one, e.g. opencage.",
+)
+@click.option(
+    "--cache",
+    "cache_path",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help=(
+        "Where answers are kept between runs.  Defaults to "
+        "~/.config/tripsy-exim/geocode.json.  Keeping them is a "
+        "condition of Nominatim's terms, not an optimisation."
+    ),
+)
+@click.option(
+    "--far-km",
+    default=2000.0,
+    show_default=True,
+    help=(
+        "Refuse a result this many kilometres from everything else on "
+        "its trip.  A geocoder fails by answering somewhere, not by "
+        "answering nothing."
+    ),
+)
+@click.option(
+    "--forget",
+    "forget",
+    multiple=True,
+    help=(
+        "Drop this address from the cache and place it again, even "
+        "where it already has a position.  Repeatable.  The way to "
+        "correct an answer that was believed and should not have been, "
+        "since nothing else would ever replace it."
+    ),
+)
+@click.option(
+    "--write/--dry-run",
+    default=False,
+    help="Actually send the positions to Tripsy.",
+)
+@click.option("--username", default=None, help="Tripsy account username.")
+@click.option("--password", default=None, help="Tripsy account password.")
+def fix_locations_command(
+    archive_root: Path | None,
+    wanted: tuple[str, ...],
+    geocoder: str,
+    api_key: str | None,
+    cache_path: Path | None,
+    far_km: float,
+    forget: tuple[str, ...],
+    write: bool,
+    username: str | None,
+    password: str | None,
+) -> None:
+    """
+    Geocode the objects Tripsy left without a position.
+
+    A clean-up run over trips already uploaded.  It finds every object
+    carrying an address and no coordinates, looks the address up with an
+    outside geocoding service, and sends the result back to Tripsy.
+
+    Why any of that is needed: Tripsy geocodes an activity's address when
+    the app renders it, and never geocodes a transportation endpoint at
+    all -- not on create, not on update.  So a leg pins only if something
+    hands it coordinates.  Activities the app has already resolved are
+    skipped, so running this after looking at a trip leaves only the legs
+    and whatever the app could not resolve either.
+
+    It reads Tripsy rather than the archive: what wants placing is
+    whatever the app has not placed, which only Tripsy knows.  Nothing is
+    written back to the archive either -- the archive is what the export
+    gives us, and this is a clean-up run over what was imported.
+
+    Every answer is refused if it lands further than `--far-km` from
+    everything else on its trip.  'Kyoto Station' resolves to a point in
+    California, which is not distinguishable from a good answer except by
+    measuring it against what the trip already knows.
+    """
+    archive = staged_archive(archive_root)
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = sorted(uploaded_trips(archive))
+    if not keys:
+        raise click.ClickException(
+            f"no trips have been uploaded from {archive.root}"
+        )
+    keys = in_travel_order(archive, keys)
+
+    cache = Cache(cache_path)
+    click.echo(f"cache: {cache.path}")
+    for address in forget:
+        dropped = "forgotten" if cache.forget(address) else "was not held"
+        click.echo(f"  {address}: {dropped}")
+    if forget:
+        cache.save()
+
+    with open_session(username, password) as client:
+        ids = client.trip_ids_by_identifier()
+        work: dict[str, tuple[int, list[Any]]] = {}
+        references: dict[str, list[tuple[float, float]]] = {}
+        for key in keys:
+            trip = staged_trip(archive, key)
+            trip_id = ids.get(str(trip.internal_identifier)) if trip else None
+            if trip_id is None:
+                continue
+            gaps = unplaced_in(client, trip_id, forget)
+            if gaps:
+                work[key] = (trip_id, gaps)
+                references[key] = positions_in(client, trip_id)
+
+        addresses = [gap.address for _, gaps in work.values() for gap in gaps]
+        unknown = [a for a in sorted(set(addresses)) if cache.get(a) is None]
+        click.echo(
+            f"{len(addresses)} endpoints, {len(set(addresses))} distinct "
+            f"addresses, {len(unknown)} to look up"
+        )
+        if unknown and not write:
+            click.echo(
+                "Dry run.  Nothing is looked up and nothing is sent.  "
+                "Pass --write to place them."
+            )
+            for address in unknown[:20]:
+                click.echo(f"    would look up  {address}")
+            return
+        if not addresses:
+            click.echo("Nothing to place.")
+            return
+
+        look = lookup_for(geocoder, **({"api_key": api_key} if api_key else {}))
+        answers = placed(addresses, look, cache)
+        click.echo(f"saved {cache.save()}")
+
+        sent = refused = blank = coarse = 0
+        for key, (trip_id, gaps) in work.items():
+            named = staged_trip(archive, key)
+            click.echo(f"\n{named.name if named else key}")
+            for gap in gaps:
+                found = answers[gap.address]
+                if not found.placed or found.position is None:
+                    blank += 1
+                    click.echo(f"    no answer   {gap.where}: {gap.address}")
+                    continue
+                if not plausible(found.position, references[key], far_km):
+                    away = far_from(found.position, references[key])
+                    refused += 1
+                    click.echo(
+                        f"    REFUSED     {gap.where}: {gap.address} -> "
+                        f"{found.label} ({away:.0f} km away)"
+                    )
+                    continue
+                lat, lon = found.position
+                client.update_child(
+                    trip_id,
+                    gap.collection,
+                    gap.child_id,
+                    {
+                        f"{gap.prefix}latitude": lat,
+                        f"{gap.prefix}longitude": lon,
+                    },
+                )
+                sent += 1
+                # The label is what makes a wrong answer visible.  'Elko,
+                # NV' resolves to Elko County, 54 km from the town, and no
+                # distance check against the rest of a trip will see that.
+                #
+                mark = "COARSE  " if found.coarse else "placed  "
+                if found.coarse:
+                    coarse += 1
+                click.echo(f"    {mark}    {gap.where}  {lat:.4f},{lon:.4f}")
+                click.echo(f"                    {found.label}")
+
+    click.echo(
+        f"\n{sent} endpoints placed, {refused} refused as implausible, "
+        f"{blank} found nowhere"
+    )
+    if coarse:
+        click.echo(
+            f"{coarse} matched something larger than the place asked for "
+            "-- a county rather than its town, say.  Check the labels "
+            "above, then --forget the address and run again."
+        )
+    click.echo(
+        f"{cache.hits} answered from the cache, {cache.misses} asked of "
+        f"{geocoder}"
+    )
 
 
 if __name__ == "__main__":

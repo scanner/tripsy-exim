@@ -30,10 +30,12 @@ from tripsy_exim.sync.importer import (
     declare_merge,
     numbered,
     plan_trip,
+    positions_in,
     spanning,
     staged_children,
     staged_trip,
     undo_merge,
+    unplaced_in,
     upload_trip,
     verify_trip,
 )
@@ -740,41 +742,19 @@ class TestAdditions:
 
     ####################################################################
     #
-    def test_an_addition_is_uploaded_with_the_trip(
+    def test_an_addition_is_uploaded_and_numbered_with_the_trip(
         self, archive: Archive
     ) -> None:
         """
-        GIVEN: a staged trip and an object added to it by hand
+        GIVEN: a staged trip and an object added to it by hand, timed
+               before the trip's only parsed object
         WHEN:  the trip is planned
-        THEN:  the addition is among what would be sent
+        THEN:  the addition is sent, and numbered by when it happened
 
-        The shuttle from the terminal to the rental counter is not in any
-        booking, because all anyone had to do was find the bus.
-        """
-        trip_key = self.added_trip(
-            archive,
-            name="LAX to the rental counter",
-            transportation_type="transfer",
-            departure_at="2024-05-03T08:00:00Z",
-        )
-
-        plan = plan_trip(archive, trip_key)
-        names = [o.name for o in plan.objects]
-        check.is_in("LAX to the rental counter", names)
-        check.equal(len(plan.objects), 2, "the ferry and the addition")
-
-    ####################################################################
-    #
-    def test_an_addition_is_numbered_by_when_it_happened(
-        self, archive: Archive
-    ) -> None:
-        """
-        GIVEN: an addition timed before the trip's only parsed object
-        WHEN:  the trip is planned
-        THEN:  it takes the first `sort_order`
-
-        An addition is numbered with everything else, or it would land at
-        the end of the trip with the objects carrying no time at all.
+        The shuttle from the terminal to the rental counter is in no
+        booking, because all anyone had to do was find the bus.  It is
+        numbered with everything else, or it would land at the end of the
+        trip among the objects carrying no time at all.
         """
         trip_key = self.added_trip(
             archive,
@@ -784,9 +764,13 @@ class TestAdditions:
         )
 
         plan = plan_trip(archive, trip_key)
+
+        check.equal(len(plan.objects), 2, "the ferry and the addition")
         check.equal(plan.objects[0].name, "the shuttle")
         check.equal(plan.objects[0].sort_order, 1)
 
+    ####################################################################
+    #
     ####################################################################
     #
     def test_an_addition_is_minted_into_the_trip_s_namespace(
@@ -971,3 +955,80 @@ class TestVerify:
 
 
 ########################################################################
+########################################################################
+#
+class TestUnplaced:
+    """Tests for finding what Tripsy holds an address for and no position."""
+
+    ####################################################################
+    #
+    def test_both_ends_of_a_leg_are_looked_at(
+        self, staged: Archive, api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: an uploaded trip whose legs carry addresses and no position
+        WHEN:  the trip is asked what is unplaced
+        THEN:  a leg contributes one entry per end
+
+        A leg is two places, and each is looked up separately: a ferry
+        crossing has a port at either side.
+        """
+        trip_key = only_key(staged)
+        result = upload_trip(api_client, staged, trip_key)
+        assert result.trip_id is not None
+
+        found = unplaced_in(api_client, result.trip_id)
+
+        legs = [row for row in found if row.collection == "transportations"]
+        check.is_true(legs, "the fixture has addressed legs")
+        check.equal(
+            {row.prefix for row in legs},
+            {"departure_", "arrival_"},
+            "both ends are offered",
+        )
+
+    ####################################################################
+    #
+    def test_placing_an_endpoint_moves_it_from_wanted_to_reference(
+        self, staged: Archive, api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: an uploaded trip, one of whose endpoints is given a position
+        WHEN:  the trip is asked what it wants and what it already places
+        THEN:  that endpoint has left the first and joined the second
+
+        Which is what makes this a clean-up run: it asks Tripsy what is
+        still missing rather than assuming anything, and what it has
+        already placed is what a new answer gets measured against.
+        """
+        trip_key = only_key(staged)
+        result = upload_trip(api_client, staged, trip_key)
+        assert result.trip_id is not None
+        before = unplaced_in(api_client, result.trip_id)
+        placed_before = positions_in(api_client, result.trip_id)
+        target = next(
+            row for row in before if row.collection == "transportations"
+        )
+
+        api_client.update_child(
+            result.trip_id,
+            target.collection,
+            target.child_id,
+            {
+                f"{target.prefix}latitude": 1.5,
+                f"{target.prefix}longitude": 2.5,
+            },
+        )
+
+        after = unplaced_in(api_client, result.trip_id)
+        gone = {(r.child_id, r.prefix) for r in before} - {
+            (r.child_id, r.prefix) for r in after
+        }
+        check.equal(gone, {(target.child_id, target.prefix)})
+        placed_after = positions_in(api_client, result.trip_id)
+        check.is_in((1.5, 2.5), placed_after)
+        check.equal(
+            len(placed_after),
+            len(placed_before) + 1,
+            "the airports the export placed are still counted too",
+        )

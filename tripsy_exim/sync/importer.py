@@ -27,7 +27,7 @@ PATCH pass, not something a re-run does on its own.
 
 # system imports
 import json
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -1091,3 +1091,121 @@ def _compare(
 
 
 ########################################################################
+########################################################################
+#
+@dataclass(frozen=True)
+class Unplaced:
+    """One endpoint Tripsy holds an address for and no position."""
+
+    collection: str
+    child_id: int
+    name: str
+    address: str
+
+    # '' for an activity or a hosting, which hold one place; 'departure_'
+    # or 'arrival_' for the two ends of a leg.
+    #
+    prefix: str = ""
+
+    ####################################################################
+    #
+    @property
+    def where(self) -> str:
+        """How this endpoint reads in a report."""
+        end = self.prefix.rstrip("_")
+        return f"{self.name} ({end})" if end else self.name
+
+
+####################################################################
+#
+def unplaced_in(
+    client: TripsyClient,
+    trip_id: int,
+    redo: Collection[str] = (),
+) -> list[Unplaced]:
+    """
+    Every object on one uploaded trip carrying an address and no position.
+
+    This asks Tripsy rather than the archive on purpose: what wants
+    placing is whatever the app has not placed, which only Tripsy knows.
+    An activity resolves itself once the app renders the trip, so running
+    this after a look in the app leaves only the legs.
+
+    An address in `redo` is returned even where it already has a
+    position.  A geocoder that answered the wrong question answered
+    confidently, and nothing would ever replace what it said: saying an
+    address was wrong is the only way back.
+
+    Args:
+        client: An authenticated client.
+        trip_id: The trip to look at.
+        redo: Addresses to return whether or not they are placed.
+
+    Returns:
+        What wants placing, in no particular order.
+    """
+    again = set(redo)
+    found: list[Unplaced] = []
+    for collection in COLLECTION_ORDER:
+        prefixes = (
+            ("departure_", "arrival_")
+            if collection == "transportations"
+            else ("",)
+        )
+        for obj in client.iter_children(trip_id, collection):
+            for prefix in prefixes:
+                address = obj.get(f"{prefix}address")
+                if not address:
+                    continue
+                if (
+                    obj.get(f"{prefix}latitude") is not None
+                    and str(address).strip() not in again
+                ):
+                    continue
+                found.append(
+                    Unplaced(
+                        collection=collection,
+                        child_id=int(obj["id"]),
+                        name=str(obj.get("name") or "")
+                        or str(obj.get(f"{prefix}description") or "")
+                        or f"<{collection[:-1]} {obj['id']}>",
+                        address=str(address).strip(),
+                        prefix=prefix,
+                    )
+                )
+    return found
+
+
+####################################################################
+#
+def positions_in(
+    client: TripsyClient, trip_id: int
+) -> list[tuple[float, float]]:
+    """
+    Every position one uploaded trip already holds.
+
+    These are what a new result is measured against: a geocoder does not
+    fail by answering nothing, it fails by answering somewhere, and only
+    the rest of the trip says whether somewhere is credible.
+
+    Args:
+        client: An authenticated client.
+        trip_id: The trip to look at.
+
+    Returns:
+        Latitude and longitude pairs, in no particular order.
+    """
+    out: list[tuple[float, float]] = []
+    for collection in COLLECTION_ORDER:
+        prefixes = (
+            ("departure_", "arrival_")
+            if collection == "transportations"
+            else ("",)
+        )
+        for obj in client.iter_children(trip_id, collection):
+            for prefix in prefixes:
+                lat = obj.get(f"{prefix}latitude")
+                lon = obj.get(f"{prefix}longitude")
+                if lat is not None and lon is not None:
+                    out.append((float(lat), float(lon)))
+    return out
