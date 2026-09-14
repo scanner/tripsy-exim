@@ -803,10 +803,12 @@ def verify_command(
     meant to be there: objects that never arrived, objects the plan does
     not know about, and any `sort_order` that does not match.
 
-    It also lists objects carrying an address Tripsy has not yet resolved
-    to a position.  Geocoding runs after the create, so a trip checked
-    moments after uploading reads as unplaced and is worth checking again
-    before anything is corrected.
+    It also lists objects carrying an address and no position.  Nothing
+    on the server resolves those: the app geocodes an activity's address
+    when it renders it, and a transportation endpoint is never geocoded
+    at all.  So an unplaced activity may place itself once the trip is
+    opened, and an unplaced leg will not.  `fix-locations` is what places
+    the rest.
     """
     archive = staged_archive(archive_root)
 
@@ -865,8 +867,9 @@ def verify_command(
     click.echo(f"\n{agreed} of {len(keys)} trips match their plan")
     if unplaced:
         click.echo(
-            f"{unplaced} addresses carry no position yet.  Tripsy geocodes "
-            "after the create, so check again before correcting any."
+            f"{unplaced} addresses carry no position.  An activity may "
+            "place itself once the app renders the trip; a leg never "
+            "will.  `fix-locations` places the rest."
         )
 
 
