@@ -111,7 +111,7 @@ def _seed_random_data(faker_seed: int) -> None:
 #
 @pytest.fixture(autouse=True)
 def _no_real_credentials(
-    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    mocker: MockerFixture, request: pytest.FixtureRequest
 ) -> None:
     """
     Keep the suite away from a real account and a real secret store.
@@ -129,18 +129,16 @@ def _no_real_credentials(
     environment, and the file it reads is one it wrote in a tmp_path.
     """
     if not request.node.get_closest_marker("uses_dotenv"):
-        monkeypatch.setattr(
-            "tripsy_exim.cli.load_dotenv", lambda *a, **k: False
-        )
-    for name in list(os.environ):
-        if name.startswith("TRIPSY_"):
-            monkeypatch.delenv(name, raising=False)
+        mocker.patch("tripsy_exim.cli.load_dotenv", return_value=False)
+    mocker.patch.dict(os.environ)
+    for name in [n for n in os.environ if n.startswith("TRIPSY_")]:
+        del os.environ[name]
 
 
 ####################################################################
 #
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_network(mocker: MockerFixture) -> None:
     """
     Keep the suite off the internet at large.
 
@@ -163,8 +161,42 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
             "geocoder rather than reaching a real service"
         )
 
-    monkeypatch.setattr(socket.socket, "connect", refuse)
-    monkeypatch.setattr(socket, "create_connection", refuse)
+    mocker.patch.object(socket.socket, "connect", refuse)
+    mocker.patch.object(socket, "create_connection", refuse)
+
+
+####################################################################
+#
+@pytest.fixture
+def environment(mocker: MockerFixture) -> os._Environ:
+    """
+    The process environment, put back as it was afterwards.
+
+    `mocker.patch.dict` snapshots the whole mapping, so a test sets and
+    deletes on the real thing and nothing survives it.  This exists so
+    that no test has to reach for `monkeypatch` alongside `mocker`.
+    """
+    mocker.patch.dict(os.environ)
+    return os.environ
+
+
+####################################################################
+#
+@pytest.fixture
+def in_directory() -> Iterator[Callable[[Path], None]]:
+    """
+    Run a test with the process somewhere else, and put it back.
+
+    Changing directory is real process state rather than a mock, which
+    is why `mocker` has nothing for it.  A test that needs it -- one
+    about `.env`, which is found relative to the working directory --
+    calls this instead of patching anything.
+    """
+    previous = Path.cwd()
+    try:
+        yield os.chdir
+    finally:
+        os.chdir(previous)
 
 
 ####################################################################

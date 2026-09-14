@@ -4,8 +4,8 @@
 
 # system imports
 import json
+from collections.abc import Callable, MutableMapping
 from pathlib import Path
-from typing import Any
 
 # 3rd party imports
 import pytest
@@ -205,7 +205,10 @@ class TestUploadCommand:
     ####################################################################
     #
     def test_a_dry_run_sends_nothing_and_needs_no_credentials(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch: Any
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        environment: MutableMapping[str, str],
     ) -> None:
         """
         GIVEN: a staged archive and no credentials anywhere
@@ -220,7 +223,7 @@ class TestUploadCommand:
             "TRIPSY_PASSWORD",
             "TRIPSY_ONEPASSWORD_URL",
         ):
-            monkeypatch.delenv(name, raising=False)
+            environment.pop(name, None)
 
         export = write_export(tmp_path, b.trip(objects=[b.flight()]))
         archive_root = tmp_path / "archive"
@@ -515,7 +518,8 @@ class TestArchiveResolution:
         self,
         runner: CliRunner,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        environment: MutableMapping[str, str],
+        in_directory: Callable[[Path], None],
     ) -> None:
         """
         GIVEN: an archive named only in a .env file
@@ -535,8 +539,8 @@ class TestArchiveResolution:
         project = tmp_path / "project"
         project.mkdir()
         (project / ".env").write_text(f"{ARCHIVE_ENV}={archive_root}\n")
-        monkeypatch.chdir(project)
-        monkeypatch.delenv(ARCHIVE_ENV, raising=False)
+        in_directory(project)
+        environment.pop(ARCHIVE_ENV, None)
 
         result = runner.invoke(main, ["list"])
 
@@ -549,7 +553,7 @@ class TestArchiveResolution:
         self,
         runner: CliRunner,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        environment: MutableMapping[str, str],
     ) -> None:
         """
         GIVEN: an archive path written with a leading ~
@@ -561,8 +565,8 @@ class TestArchiveResolution:
         """
         home = tmp_path / "home"
         home.mkdir()
-        monkeypatch.setenv("HOME", str(home))
-        monkeypatch.setenv(ARCHIVE_ENV, "~/Documents/tripsy-archive")
+        environment["HOME"] = str(home)
+        environment[ARCHIVE_ENV] = "~/Documents/tripsy-archive"
 
         export = write_export(tmp_path, b.trip(objects=[b.flight()]))
         result = runner.invoke(main, ["stage-export", str(export)])
@@ -579,7 +583,7 @@ class TestArchiveResolution:
         self,
         runner: CliRunner,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        environment: MutableMapping[str, str],
     ) -> None:
         """
         GIVEN: an archive directory that does not exist
@@ -589,7 +593,7 @@ class TestArchiveResolution:
         The path may have come from .env or from a default, so repeating
         it back is the only way to see which one was used.
         """
-        monkeypatch.setenv(ARCHIVE_ENV, str(tmp_path / "nowhere"))
+        environment[ARCHIVE_ENV] = str(tmp_path / "nowhere")
 
         result = runner.invoke(main, ["list"])
 
@@ -602,7 +606,7 @@ class TestArchiveResolution:
         self,
         runner: CliRunner,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        environment: MutableMapping[str, str],
         mocker: MockerFixture,
     ) -> None:
         """
@@ -622,7 +626,7 @@ class TestArchiveResolution:
         """
         root = tmp_path / "locked"
         (root / "trips").mkdir(parents=True)
-        monkeypatch.setenv(ARCHIVE_ENV, str(root))
+        environment[ARCHIVE_ENV] = str(root)
         mocker.patch.object(
             Archive,
             "trip_keys",
@@ -639,7 +643,10 @@ class TestArchiveResolution:
     ####################################################################
     #
     def test_a_write_is_refused_while_a_leg_carries_no_type(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch: Any
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        environment: MutableMapping[str, str],
     ) -> None:
         """
         GIVEN: a staged trip holding a leg the reader could not type
@@ -650,8 +657,8 @@ class TestArchiveResolution:
         untyped leg is refused one object at a time in the middle of a
         run and its trip goes up short.
         """
-        monkeypatch.setenv("TRIPSY_USERNAME", "someone")
-        monkeypatch.setenv("TRIPSY_PASSWORD", "secret")
+        environment["TRIPSY_USERNAME"] = "someone"
+        environment["TRIPSY_PASSWORD"] = "secret"
 
         export = write_export(
             tmp_path,

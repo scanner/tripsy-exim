@@ -10,6 +10,7 @@ real 1Password would need a real vault and would write to it.
 
 # system imports
 import subprocess
+from collections.abc import MutableMapping
 from typing import Any
 
 # 3rd party imports
@@ -62,7 +63,7 @@ class TestStoreFor:
     ####################################################################
     #
     def test_no_url_anywhere_is_not_an_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, environment: MutableMapping[str, str]
     ) -> None:
         """
         GIVEN: no URL given and none in the environment
@@ -72,21 +73,21 @@ class TestStoreFor:
         Having no secret store is an ordinary way to run: credentials can
         come from a flag or the environment instead.
         """
-        monkeypatch.delenv(SECRET_URL_ENV, raising=False)
+        environment.pop(SECRET_URL_ENV, None)
 
         assert store_for() is None
 
     ####################################################################
     #
     def test_the_environment_names_the_store(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, environment: MutableMapping[str, str]
     ) -> None:
         """
         GIVEN: TRIPSY_SECRET_URL set
         WHEN:  a store is asked for with no argument
         THEN:  the environment's URL is used
         """
-        monkeypatch.setenv(SECRET_URL_ENV, "op://Work/Tripsy")
+        environment[SECRET_URL_ENV] = "op://Work/Tripsy"
 
         store = store_for()
 
@@ -276,7 +277,7 @@ class TestOnePasswordStore:
     ####################################################################
     #
     def test_the_binary_comes_from_the_environment(
-        self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+        self, environment: MutableMapping[str, str], mocker: MockerFixture
     ) -> None:
         """
         GIVEN: TRIPSY_OP_BIN naming a particular op
@@ -286,7 +287,7 @@ class TestOnePasswordStore:
         More than one op can be on a PATH and only the one the desktop
         app authorised can reach an account.
         """
-        monkeypatch.setenv(OP_BIN_ENV, "/usr/local/bin/op")
+        environment[OP_BIN_ENV] = "/usr/local/bin/op"
         run = mocker.patch(
             "tripsy_exim.secrets.subprocess.run",
             return_value=completed(stdout="value"),

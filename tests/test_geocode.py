@@ -12,6 +12,7 @@ else entirely.
 """
 
 # system imports
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Any
 # 3rd party imports
 import pytest
 import pytest_check as check
+from pytest_mock import MockerFixture
 
 # Project imports
 from tripsy_exim.geocode import (
@@ -202,7 +204,7 @@ class TestCache:
     )
     def test_where_the_cache_lives(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        environment: MutableMapping[str, str],
         named: str | None,
         config: str,
         expected: str,
@@ -215,10 +217,10 @@ class TestCache:
         Keeping results is a condition of the terms, so the default is
         somewhere a disk cleaner will not empty.
         """
-        monkeypatch.setenv("XDG_CONFIG_HOME", config)
-        monkeypatch.delenv(CACHE_ENV, raising=False)
+        environment["XDG_CONFIG_HOME"] = config
+        environment.pop(CACHE_ENV, None)
         if named:
-            monkeypatch.setenv(CACHE_ENV, named)
+            environment[CACHE_ENV] = named
 
         assert default_cache() == Path(expected)
 
@@ -443,7 +445,7 @@ class TestTheCallWeMake:
     ####################################################################
     #
     @pytest.fixture
-    def recorded(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    def recorded(self, mocker: MockerFixture) -> dict[str, Any]:
         """
         Stand in for `geopy`, recording the call and returning what a
         test puts in `answer`.
@@ -461,9 +463,9 @@ class TestTheCallWeMake:
                 seen["asked"].append(address)
                 return seen["answer"]
 
-        monkeypatch.setattr(
+        mocker.patch(
             "tripsy_exim.geocode.get_geocoder_for_service",
-            lambda service: Recorded,
+            return_value=Recorded,
         )
         return seen
 
