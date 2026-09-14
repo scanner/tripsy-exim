@@ -19,6 +19,7 @@ from tests import tripit_builder as b
 from tests.ics_builder import build_calendar, to_ics
 from tripsy_exim.cli import main
 from tripsy_exim.geocode import Cache, Found, normalised
+from tripsy_exim.secrets import SECRET_URL_ENV
 from tripsy_exim.store import ARCHIVE_ENV, Archive
 from tripsy_exim.sync.importer import (
     Unplaced,
@@ -45,6 +46,88 @@ def write_export(tmp_path: Path, *trips: dict) -> Path:
     return path
 
 
+# Two trips whose names share a word and differ in another.  Both halves
+# are load-bearing: 'kyoto' has to pick one trip and 'japan' has to pick
+# both, which is what makes one of them a match and the other ambiguous.
+#
+OSAKA = "Osaka, Japan, May 2024"
+KYOTO = "Kyoto, Japan, June 2024"
+
+# Two trips eight months apart.  The names say which is which, so a test
+# reads its own output without working the dates out.
+#
+EARLIER = "Earlier trip"
+LATER = "Later trip"
+
+
+####################################################################
+#
+def named_pair() -> tuple[dict, dict]:
+    """Two trips sharing a word in their names."""
+    return (
+        b.trip(name=OSAKA, objects=[b.flight()]),
+        b.trip(
+            name=KYOTO,
+            start="2024-06-01",
+            end="2024-06-04",
+            objects=[b.lodging()],
+        ),
+    )
+
+
+####################################################################
+#
+def dated_pair() -> tuple[dict, dict]:
+    """
+    Two trips far apart in time, given later first.
+
+    Always the wrong way round, so a test that gets them back in travel
+    order has shown it ordered them rather than kept them as they came.
+    """
+    return (
+        b.trip(
+            name=LATER,
+            start="2024-09-01",
+            end="2024-09-04",
+            objects=[b.flight()],
+        ),
+        b.trip(
+            name=EARLIER,
+            start="2024-01-01",
+            end="2024-01-04",
+            objects=[b.lodging()],
+        ),
+    )
+
+
+####################################################################
+#
+@pytest.fixture
+def staged(runner: CliRunner, tmp_path: Path) -> Callable[..., Path]:
+    """
+    Stage trips into a fresh archive and give back its root.
+
+    Every command but the staging ones needs an archive to work on
+    rather than an export, so building one is groundwork rather than
+    part of any test.
+    """
+
+    def stage(*trips: dict) -> Path:
+        """Stage these trips, or one ordinary one when none are named."""
+        if not trips:
+            trips = (b.trip(objects=[b.flight()]),)
+        export = write_export(tmp_path, *trips)
+        archive_root = tmp_path / "archive"
+        result = runner.invoke(
+            main,
+            ["stage-export", str(export), "--archive", str(archive_root)],
+        )
+        assert result.exit_code == 0, result.output
+        return archive_root
+
+    return stage
+
+
 ########################################################################
 ########################################################################
 #
@@ -61,16 +144,7 @@ class TestStageExport:
         WHEN:  stage-export is run against it
         THEN:  both trips are written to the archive and reported
         """
-        export = write_export(
-            tmp_path,
-            b.trip(name="Osaka, Japan, May 2024", objects=[b.flight()]),
-            b.trip(
-                name="Kyoto, Japan, June 2024",
-                start="2024-06-01",
-                end="2024-06-04",
-                objects=[b.lodging()],
-            ),
-        )
+        export = write_export(tmp_path, *named_pair())
         archive_root = tmp_path / "archive"
 
         result = runner.invoke(
@@ -213,7 +287,7 @@ class TestUploadCommand:
     def test_a_dry_run_sends_nothing_and_needs_no_credentials(
         self,
         runner: CliRunner,
-        tmp_path: Path,
+        staged: Callable[..., Path],
         environment: MutableMapping[str, str],
     ) -> None:
         """
@@ -224,19 +298,10 @@ class TestUploadCommand:
         The plan is what a person reads before the one step that cannot
         be undone, so it must not require an account to see.
         """
-        for name in (
-            "TRIPSY_USERNAME",
-            "TRIPSY_PASSWORD",
-            "TRIPSY_ONEPASSWORD_URL",
-        ):
+        for name in ("TRIPSY_USERNAME", "TRIPSY_PASSWORD", SECRET_URL_ENV):
             environment.pop(name, None)
 
-        export = write_export(tmp_path, b.trip(objects=[b.flight()]))
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main,
-            ["stage-export", str(export), "--archive", str(archive_root)],
-        )
+        archive_root = staged()
 
         result = runner.invoke(main, ["upload", "--archive", str(archive_root)])
 
@@ -265,7 +330,7 @@ class TestUploadCommand:
     ####################################################################
     #
     def test_trips_are_selected_by_name(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: an archive of two trips
@@ -274,20 +339,7 @@ class TestUploadCommand:
 
         A trip key is a digest nobody can recognise or type.
         """
-        export = write_export(
-            tmp_path,
-            b.trip(name="Osaka, Japan, May 2024", objects=[b.flight()]),
-            b.trip(
-                name="Kyoto, Japan, June 2024",
-                start="2024-06-01",
-                end="2024-06-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*named_pair())
 
         result = runner.invoke(
             main,
@@ -295,14 +347,14 @@ class TestUploadCommand:
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in("Kyoto", result.output)
-        check.is_not_in("Osaka", result.output)
+        check.is_in(KYOTO, result.output)
+        check.is_not_in(OSAKA, result.output)
         check.is_in("1 trips", result.output)
 
     ####################################################################
     #
     def test_an_ambiguous_name_is_refused(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: two trips whose names share a word
@@ -312,20 +364,7 @@ class TestUploadCommand:
         Picking one would upload the wrong trip, and an identifier spent
         on the wrong trip cannot be taken back.
         """
-        export = write_export(
-            tmp_path,
-            b.trip(name="Osaka, Japan, May 2024", objects=[b.flight()]),
-            b.trip(
-                name="Kyoto, Japan, June 2024",
-                start="2024-06-01",
-                end="2024-06-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*named_pair())
 
         result = runner.invoke(
             main,
@@ -338,7 +377,7 @@ class TestUploadCommand:
     ####################################################################
     #
     def test_trips_are_planned_oldest_first(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: an archive of trips staged in no particular order
@@ -348,38 +387,20 @@ class TestUploadCommand:
         The archive orders trips by a digest, so without this --limit
         picks an arbitrary handful rather than working forward.
         """
-        export = write_export(
-            tmp_path,
-            b.trip(
-                name="Later trip",
-                start="2024-09-01",
-                end="2024-09-04",
-                objects=[b.flight()],
-            ),
-            b.trip(
-                name="Earlier trip",
-                start="2024-01-01",
-                end="2024-01-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*dated_pair())
 
         result = runner.invoke(
             main, ["upload", "--archive", str(archive_root), "--limit", "1"]
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in("Earlier trip", result.output)
-        check.is_not_in("Later trip", result.output)
+        check.is_in(EARLIER, result.output)
+        check.is_not_in(LATER, result.output)
 
     ####################################################################
     #
     def test_a_finished_trip_does_not_spend_the_limit(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: an archive whose oldest trip a run already finished
@@ -389,25 +410,7 @@ class TestUploadCommand:
         Otherwise running with --limit 1 twice would do the first trip
         and then nothing, rather than walking forward a trip at a time.
         """
-        export = write_export(
-            tmp_path,
-            b.trip(
-                name="Earlier trip",
-                start="2024-01-01",
-                end="2024-01-04",
-                objects=[b.flight()],
-            ),
-            b.trip(
-                name="Later trip",
-                start="2024-09-01",
-                end="2024-09-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*dated_pair())
 
         archive = Archive(archive_root)
         oldest = in_travel_order(archive, archive.trip_keys())[0]
@@ -418,7 +421,7 @@ class TestUploadCommand:
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in("Later trip", result.output)
+        check.is_in(LATER, result.output)
         check.is_in("1 trips skipped", result.output)
 
 
@@ -431,32 +434,14 @@ class TestListCommand:
     ####################################################################
     #
     def test_trips_are_listed_oldest_first_with_their_state(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: an archive of two trips, one already uploaded
         WHEN:  list is run
         THEN:  both appear oldest first, and the finished one is marked
         """
-        export = write_export(
-            tmp_path,
-            b.trip(
-                name="Later trip",
-                start="2024-09-01",
-                end="2024-09-04",
-                objects=[b.flight()],
-            ),
-            b.trip(
-                name="Earlier trip",
-                start="2024-01-01",
-                end="2024-01-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*dated_pair())
         archive = Archive(archive_root)
         mark_uploaded(archive, in_travel_order(archive, archive.trip_keys())[0])
 
@@ -464,8 +449,8 @@ class TestListCommand:
 
         check.equal(result.exit_code, 0, result.output)
         check.less(
-            result.output.index("Earlier trip"),
-            result.output.index("Later trip"),
+            result.output.index(EARLIER),
+            result.output.index(LATER),
             "oldest first",
         )
         check.is_in("1 already uploaded", result.output)
@@ -473,32 +458,14 @@ class TestListCommand:
     ####################################################################
     #
     def test_pending_hides_what_is_done(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
         GIVEN: an archive whose oldest trip is uploaded
         WHEN:  list is run with --pending
         THEN:  only the trip still to do is shown
         """
-        export = write_export(
-            tmp_path,
-            b.trip(
-                name="Earlier trip",
-                start="2024-01-01",
-                end="2024-01-04",
-                objects=[b.flight()],
-            ),
-            b.trip(
-                name="Later trip",
-                start="2024-09-01",
-                end="2024-09-04",
-                objects=[b.lodging()],
-            ),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
-        )
+        archive_root = staged(*dated_pair())
         archive = Archive(archive_root)
         mark_uploaded(archive, in_travel_order(archive, archive.trip_keys())[0])
 
@@ -507,8 +474,8 @@ class TestListCommand:
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in("Later trip", result.output)
-        check.is_not_in("Earlier trip", result.output)
+        check.is_in(LATER, result.output)
+        check.is_not_in(EARLIER, result.output)
 
 
 ########################################################################
@@ -651,7 +618,7 @@ class TestArchiveResolution:
     def test_a_write_is_refused_while_a_leg_carries_no_type(
         self,
         runner: CliRunner,
-        tmp_path: Path,
+        staged: Callable[..., Path],
         environment: MutableMapping[str, str],
     ) -> None:
         """
@@ -666,13 +633,8 @@ class TestArchiveResolution:
         environment["TRIPSY_USERNAME"] = "someone"
         environment["TRIPSY_PASSWORD"] = "secret"
 
-        export = write_export(
-            tmp_path,
-            b.trip(objects=[b.flight(), b.untyped_transport()]),
-        )
-        archive_root = tmp_path / "archive"
-        runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
+        archive_root = staged(
+            b.trip(objects=[b.flight(), b.untyped_transport()])
         )
 
         result = runner.invoke(
@@ -694,7 +656,7 @@ class TestFixLocationsCommand:
     @pytest.fixture
     def uploaded(
         self,
-        runner: CliRunner,
+        staged: Callable[..., Path],
         tmp_path: Path,
         mocker: MockerFixture,
         faker: Faker,
@@ -708,12 +670,7 @@ class TestFixLocationsCommand:
         """
 
         def make(cached: tuple[float, float] | None) -> tuple[Path, list]:
-            export = write_export(tmp_path, b.trip(objects=[b.flight()]))
-            archive_root = tmp_path / "archive"
-            runner.invoke(
-                main,
-                ["stage-export", str(export), "--archive", str(archive_root)],
-            )
+            archive_root = staged()
             archive = Archive(archive_root)
             key = next(iter(archive.trip_keys()))
             mark_uploaded(archive, key)
