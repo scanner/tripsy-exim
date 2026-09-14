@@ -15,9 +15,10 @@ including fields the factory does not declare.
 
 # system imports
 import os
+import socket
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 # 3rd party imports
 import factory.random
@@ -134,6 +135,36 @@ def _no_real_credentials(
     for name in list(os.environ):
         if name.startswith("TRIPSY_"):
             monkeypatch.delenv(name, raising=False)
+
+
+####################################################################
+#
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Keep the suite off the internet at large.
+
+    The geocoding layer talks to a public service through `geopy`, which
+    uses `urllib` and opens its own sockets -- nothing `respx` is holding.
+    A test that reached it would be slow, flaky, dependent on somebody
+    else's uptime, and would spend requests against a usage policy that
+    counts them.
+
+    Sockets are refused outright rather than mocked, so a call that
+    escapes says where it came from instead of quietly succeeding.
+    Nothing here stands a service up in its place: what is worth testing
+    is that `geopy` is called correctly and its answer read correctly,
+    not that `geopy` works.
+    """
+
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
+        raise RuntimeError(
+            "a test tried to open a network connection; stub the "
+            "geocoder rather than reaching a real service"
+        )
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
 
 
 ####################################################################
