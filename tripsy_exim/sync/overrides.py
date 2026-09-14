@@ -93,11 +93,42 @@ class Override:
 ########################################################################
 #
 @dataclass
+class Addition:
+    """One object the source never held, against one trip."""
+
+    collection: str
+    fields: dict[str, Any] = field(default_factory=dict)
+    note: str | None = None
+
+    ####################################################################
+    #
+    def as_document(self) -> dict[str, Any]:
+        """This addition, as it is stored."""
+        out: dict[str, Any] = {"collection": self.collection}
+        if self.fields:
+            out["fields"] = dict(self.fields)
+        if self.note is not None:
+            out["note"] = self.note
+        return out
+
+
+########################################################################
+########################################################################
+#
+@dataclass
 class OverrideSet:
     """Every correction against one trip, keyed by source uuid."""
 
     trip_uuid: str
     entries: dict[str, Override] = field(default_factory=dict)
+
+    # Objects the source never held.  A correction names something the
+    # parser produced; an addition is something only a person knows --
+    # the shuttle from the terminal to the rental counter that nobody
+    # writes down because all you had to do was find it.  They live here
+    # rather than in the trip directory so re-staging cannot prune them.
+    #
+    additions: dict[str, Addition] = field(default_factory=dict)
 
     ####################################################################
     #
@@ -118,15 +149,56 @@ class OverrideSet:
 
     ####################################################################
     #
+    def add(self, uuid: str, collection: str, **fields: Any) -> None:
+        """
+        Record an object the source never held.
+
+        Args:
+            uuid: A uuid for the addition, minted by whoever adds it.
+                Re-adding under the same uuid replaces the fields.
+            collection: Which collection the object belongs to.
+            fields: The object's own fields.  Every one is the adder's:
+                nothing is inferred from a source record, because there
+                is none.
+
+        Raises:
+            ValueError: The collection is not one Tripsy has, or a field
+                holds a value that cannot be stored.
+        """
+        if collection not in MODEL_FOR_COLLECTION:
+            raise ValueError(
+                f"unknown collection {collection!r}; expected one of "
+                f"{', '.join(sorted(MODEL_FOR_COLLECTION))}"
+            )
+        for name, value in sorted(fields.items()):
+            try:
+                json.dumps(value)
+            except TypeError as exc:
+                raise ValueError(
+                    f"{name} holds a {type(value).__name__}, which cannot "
+                    f"be stored; give instants as ISO 8601 strings"
+                ) from exc
+        self.additions[uuid] = Addition(
+            collection=collection, fields=dict(fields)
+        )
+
+    ####################################################################
+    #
     def as_document(self) -> dict[str, Any]:
         """The whole set, as it is stored."""
-        return {
+        document: dict[str, Any] = {
             "trip_uuid": self.trip_uuid,
             "entries": {
                 uuid: entry.as_document()
                 for uuid, entry in sorted(self.entries.items())
             },
         }
+        if self.additions:
+            document["additions"] = {
+                uuid: addition.as_document()
+                for uuid, addition in sorted(self.additions.items())
+            }
+        return document
 
 
 ####################################################################
@@ -169,7 +241,17 @@ def load_overrides(archive: Archive, trip_uuid: str) -> OverrideSet:
         )
         for uuid, body in (document.get("entries") or {}).items()
     }
-    return OverrideSet(trip_uuid=trip_uuid, entries=entries)
+    additions = {
+        uuid: Addition(
+            collection=str(body.get("collection") or ""),
+            fields=dict(body.get("fields") or {}),
+            note=body.get("note"),
+        )
+        for uuid, body in (document.get("additions") or {}).items()
+    }
+    return OverrideSet(
+        trip_uuid=trip_uuid, entries=entries, additions=additions
+    )
 
 
 ####################################################################

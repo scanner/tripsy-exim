@@ -207,6 +207,140 @@ class TestOverrideStorage:
 ########################################################################
 ########################################################################
 #
+class TestAdditions:
+    """Tests for objects a person added that no source record held."""
+
+    ####################################################################
+    #
+    def test_round_trip(self, tmp_path: Path) -> None:
+        """
+        GIVEN: an addition recorded against a trip
+        WHEN:  it is saved and read back
+        THEN:  its collection, fields and note all survive
+        """
+        archive = Archive(tmp_path)
+        overrides = OverrideSet(trip_uuid="t1")
+        overrides.add(
+            "a1",
+            "transportations",
+            name="LAX to the rental counter",
+            transportation_type="transfer",
+        )
+        overrides.additions["a1"].note = "no source record"
+
+        save_overrides(archive, overrides)
+        addition = load_overrides(archive, "t1").additions["a1"]
+
+        check.equal(addition.collection, "transportations")
+        check.equal(
+            addition.fields,
+            {
+                "name": "LAX to the rental counter",
+                "transportation_type": "transfer",
+            },
+        )
+        check.equal(addition.note, "no source record")
+
+    ####################################################################
+    #
+    def test_a_set_with_no_additions_stores_none(self, tmp_path: Path) -> None:
+        """
+        GIVEN: corrections carrying no additions
+        WHEN:  they are saved
+        THEN:  no `additions` key is written
+
+        Every trip has corrections; almost none have additions.
+        """
+        archive = Archive(tmp_path)
+        overrides = OverrideSet(trip_uuid="t1")
+        overrides.correct("e1", name="corrected")
+        path = save_overrides(archive, overrides)
+
+        assert "additions" not in json.loads(path.read_text())
+
+    ####################################################################
+    #
+    def test_adding_twice_under_one_uuid_replaces(self, tmp_path: Path) -> None:
+        """
+        GIVEN: an addition recorded twice under the same uuid
+        WHEN:  the set is read back
+        THEN:  one addition is held, carrying the second set of fields
+
+        The uuid is what makes re-running the hand that added it a no-op
+        rather than a second shuttle bus.
+        """
+        archive = Archive(tmp_path)
+        overrides = OverrideSet(trip_uuid="t1")
+        overrides.add("a1", "activities", name="first")
+        overrides.add("a1", "activities", name="second")
+
+        save_overrides(archive, overrides)
+        loaded = load_overrides(archive, "t1")
+
+        check.equal(len(loaded.additions), 1)
+        check.equal(loaded.additions["a1"].fields, {"name": "second"})
+
+    ####################################################################
+    #
+    def test_unknown_collection_is_refused(self, tmp_path: Path) -> None:
+        """
+        GIVEN: an addition naming a collection that does not exist
+        WHEN:  it is recorded
+        THEN:  it is refused, rather than failing later at upload time
+        """
+        overrides = OverrideSet(trip_uuid="t1")
+
+        with pytest.raises(ValueError):
+            overrides.add("a1", "restaurants", name="dinner")
+
+    ####################################################################
+    #
+    def test_a_field_that_cannot_be_stored_is_refused(self) -> None:
+        """
+        GIVEN: an addition whose instant is a datetime rather than text
+        WHEN:  it is recorded
+        THEN:  it is refused, naming the field and what to give instead
+
+        Additions are stored as JSON, so a datetime fails at save time --
+        long after the line that put it there.
+        """
+        from datetime import UTC, datetime
+
+        overrides = OverrideSet(trip_uuid="t1")
+
+        with pytest.raises(ValueError, match="departure_at"):
+            overrides.add(
+                "a1",
+                "transportations",
+                departure_at=datetime(2024, 5, 3, tzinfo=UTC),
+            )
+
+    ####################################################################
+    #
+    def test_applying_corrections_ignores_additions(
+        self, tmp_path: Path, faker: Faker
+    ) -> None:
+        """
+        GIVEN: a trip whose corrections hold an addition and nothing else
+        WHEN:  the corrections are applied to the archive
+        THEN:  nothing is touched and no uuid is reported unknown
+
+        An addition is not in the trip's index and never will be: it is
+        applied on the way out, not written into the staged trip.
+        """
+        archive, trip, _ = staged(tmp_path, faker)
+        overrides = OverrideSet(trip_uuid="t1")
+        overrides.add("a1", "activities", name="added")
+
+        applied = apply_overrides(archive, trip.trip_key, overrides)
+
+        check.equal(applied.total, 0)
+        check.equal(applied.unknown, [])
+
+
+########################################################################
+########################################################################
+#
 class TestApplyOverrides:
     """Tests for laying corrections over a staged trip."""
 

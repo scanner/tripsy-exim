@@ -130,6 +130,32 @@ def generation_of(identifier: str | None) -> int | None:
 
 ####################################################################
 #
+def namespace_of(identifier: str | None) -> str | None:
+    """
+    Read the namespace out of an identifier.
+
+    An archive is self-describing: an object added to a staged trip by
+    hand takes its namespace from the trip it is added to, so a shaping
+    run's additions mint shaping identifiers without being told which
+    run they belong to.
+
+    Args:
+        identifier: Any identifier, or None.
+
+    Returns:
+        The namespace, or None when this is not one `mint` produced.
+    """
+    if not is_minted(identifier) or not identifier:
+        return None
+    found = _GENERATION.search(identifier)
+    if not found:
+        return None
+    body = identifier[len(IDENTIFIER_PREFIX) + 1 : found.start()]
+    return body or None
+
+
+####################################################################
+#
 def next_generation(identifier: str) -> str:
     """
     The same record's identifier, one generation on.

@@ -31,6 +31,7 @@ from tripsy_exim.models.identifiers import (
     is_minted,
     is_scratch,
     mint,
+    namespace_of,
     next_generation,
     scratch_namespace,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "is_minted",
     "is_scratch",
     "mint",
+    "namespace_of",
     "next_generation",
     "SCRATCH_PREFIX",
     "scratch_namespace",

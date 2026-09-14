@@ -30,7 +30,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Project imports
@@ -47,6 +47,8 @@ from tripsy_exim.models import (
     Hosting,
     Transportation,
     Trip,
+    mint,
+    namespace_of,
 )
 from tripsy_exim.store import Archive
 from tripsy_exim.sync.overrides import (
@@ -751,6 +753,54 @@ def corrections(archive: Archive, trip_key: str) -> dict[str, Override]:
 
 ####################################################################
 #
+def added(archive: Archive, trip_key: str) -> list[Child]:
+    """
+    The objects a person added to one trip, built from its corrections.
+
+    An addition carries no source record, so its identifier is minted
+    from the trip's uuid and its own -- the two identities that survive a
+    re-export -- in the namespace the trip itself was staged under.  A
+    re-stage therefore reproduces the same identifier, and re-uploading
+    an addition is a no-op the same way re-uploading a parsed object is.
+
+    Args:
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to read additions for.
+
+    Returns:
+        The added objects, empty when the trip has none.
+    """
+    report = archive.trip_dir(trip_key) / REPORT_FILENAME
+    if not report.is_file():
+        return []
+
+    document = json.loads(report.read_text(encoding="utf-8"))
+    trip_uuid = document.get("trip_uuid")
+    if not trip_uuid:
+        return []
+
+    overrides = load_overrides(archive, str(trip_uuid))
+    if not overrides.additions:
+        return []
+
+    trip = staged_trip(archive, trip_key)
+    namespace = namespace_of(trip.internal_identifier if trip else None)
+    if namespace is None:
+        return []
+
+    built: list[Child] = []
+    for uuid, addition in sorted(overrides.additions.items()):
+        model = MODEL_FOR_COLLECTION.get(addition.collection)
+        if model is None:
+            continue
+        fields = dict(addition.fields)
+        fields["internal_identifier"] = mint(namespace, str(trip_uuid), uuid)
+        built.append(cast(Child, model.model_validate(fields)))
+    return built
+
+
+####################################################################
+#
 def corrected(obj: Child, override: Override) -> Child:
     """
     Lay one correction over one object.
@@ -801,12 +851,16 @@ def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
         else obj
         for obj in staged_children(archive, trip_key)
     ]
+    objects.extend(added(archive, trip_key))
     seen = {_fingerprint(obj) for obj in objects}
 
     duplicates = 0
     for absorbed in absorbed_by(archive, trip_key):
         others = corrections(archive, absorbed)
-        for obj in staged_children(archive, absorbed):
+        for obj in [
+            *staged_children(archive, absorbed),
+            *added(archive, absorbed),
+        ]:
             key = str(obj.internal_identifier)
             if key in others:
                 obj = corrected(obj, others[key])
@@ -882,3 +936,6 @@ def _remember(archive: Archive, identifier: str, trip_id: int) -> None:
     cache = manifest.setdefault("identifier_cache", {})
     cache[identifier] = trip_id
     archive.write_manifest(manifest)
+
+
+########################################################################

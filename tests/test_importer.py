@@ -20,9 +20,11 @@ import pytest_check as check
 # Project imports
 from tests import tripit_builder as b
 from tripsy_exim.api import TripsyClient
+from tripsy_exim.models import namespace_of
 from tripsy_exim.store import Archive
 from tripsy_exim.sync import REPORT_FILENAME, stage_export
 from tripsy_exim.sync.importer import (
+    added,
     child_ids_by_identifier,
     corrections,
     declare_merge,
@@ -713,3 +715,146 @@ class TestCorrections:
         found = corrections(archive, scratch)
         check.equal(len(found), 1, "reached the scratch copy too")
         check.is_in("corrected", [o.fields.get("name") for o in found.values()])
+
+
+########################################################################
+########################################################################
+#
+class TestAdditions:
+    """Tests for uploading an object no source record held."""
+
+    ####################################################################
+    #
+    def added_trip(self, archive: Archive, **fields: Any) -> str:
+        """Stage one ferry trip and add an object to it.  Returns its key."""
+        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
+        trip_key = archive.trip_keys()[0]
+        report = json.loads(
+            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
+        )
+        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
+        overrides.add("a1", "transportations", **fields)
+        save_overrides(archive, overrides)
+        return trip_key
+
+    ####################################################################
+    #
+    def test_an_addition_is_uploaded_with_the_trip(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a staged trip and an object added to it by hand
+        WHEN:  the trip is planned
+        THEN:  the addition is among what would be sent
+
+        The shuttle from the terminal to the rental counter is not in any
+        booking, because all anyone had to do was find the bus.
+        """
+        trip_key = self.added_trip(
+            archive,
+            name="LAX to the rental counter",
+            transportation_type="transfer",
+            departure_at="2024-05-03T08:00:00Z",
+        )
+
+        plan = plan_trip(archive, trip_key)
+        names = [o.name for o in plan.objects]
+        check.is_in("LAX to the rental counter", names)
+        check.equal(len(plan.objects), 2, "the ferry and the addition")
+
+    ####################################################################
+    #
+    def test_an_addition_is_numbered_by_when_it_happened(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: an addition timed before the trip's only parsed object
+        WHEN:  the trip is planned
+        THEN:  it takes the first `sort_order`
+
+        An addition is numbered with everything else, or it would land at
+        the end of the trip with the objects carrying no time at all.
+        """
+        trip_key = self.added_trip(
+            archive,
+            name="the shuttle",
+            transportation_type="transfer",
+            departure_at="2024-05-02T23:00:00Z",
+        )
+
+        plan = plan_trip(archive, trip_key)
+        check.equal(plan.objects[0].name, "the shuttle")
+        check.equal(plan.objects[0].sort_order, 1)
+
+    ####################################################################
+    #
+    def test_an_addition_is_minted_into_the_trip_s_namespace(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: an addition to a trip staged under the parser's namespace
+        WHEN:  its identifier is minted
+        THEN:  it carries that namespace and is stable across reads
+
+        An archive is self-describing: nothing has to tell an addition
+        which run it belongs to.
+        """
+        trip_key = self.added_trip(archive, name="the shuttle")
+
+        trip = staged_trip(archive, trip_key)
+        assert trip is not None
+        once = added(archive, trip_key)[0]
+        twice = added(archive, trip_key)[0]
+
+        check.equal(once.internal_identifier, twice.internal_identifier)
+        check.equal(
+            namespace_of(once.internal_identifier),
+            namespace_of(trip.internal_identifier),
+        )
+
+    ####################################################################
+    #
+    def test_an_addition_survives_re_staging(self, archive: Archive) -> None:
+        """
+        GIVEN: an addition to a trip whose export is staged again
+        WHEN:  the trip is planned
+        THEN:  the addition is still there
+
+        Staging prunes whatever the parser no longer produces, and it
+        never produces an addition.  Living outside the trip directory is
+        what keeps one.
+        """
+        document = b.export(b.trip(objects=[b.ferry()]))
+        stage_export(archive, document)
+        trip_key = archive.trip_keys()[0]
+        report = json.loads(
+            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
+        )
+        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
+        overrides.add("a1", "transportations", name="the shuttle")
+        save_overrides(archive, overrides)
+
+        stage_export(archive, document)
+
+        names = [o.name for o in plan_trip(archive, trip_key).objects]
+        check.is_in("the shuttle", names)
+
+    ####################################################################
+    #
+    def test_a_trip_with_no_additions_gains_nothing(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a staged trip nobody has added to
+        WHEN:  its additions are read
+        THEN:  none come back
+
+        Almost every trip is this one, so the common path has to cost
+        nothing.
+        """
+        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
+
+        check.equal(added(archive, archive.trip_keys()[0]), [])
+
+
+########################################################################

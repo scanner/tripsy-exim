@@ -36,6 +36,7 @@ from tripsy_exim.sync.importer import (
 )
 from tripsy_exim.sync.overrides import (
     OVERRIDES_DIRNAME,
+    Addition,
     Applied,
     Override,
     OverrideSet,
@@ -64,6 +65,7 @@ __all__ = [
     "REPORT_FILENAME",
     "TRIP_INDEX",
     "DIVERGENCE_KM",
+    "Addition",
     "Applied",
     "Enrichment",
     "Match",
