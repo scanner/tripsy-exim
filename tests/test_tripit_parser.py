@@ -752,43 +752,30 @@ class TestMarkup:
 
     ####################################################################
     #
-    def test_a_forwarded_email_keeps_its_addresses(self) -> None:
+    def test_a_note_loses_its_tags_and_keeps_its_content(self) -> None:
         """
-        GIVEN: a note holding a forwarded email
+        GIVEN: a note holding a forwarded email and a stray tag
         WHEN:  it is parsed
-        THEN:  the bracketed address survives, and the line breaks do
+        THEN:  the tag goes, and the address and line breaks stay
 
-        An address in angle brackets is content.  A pattern for anything
-        bracketed would eat it, which is why only real tags are matched.
+        An address in angle brackets is content, and a pattern for
+        anything bracketed would eat it.  Only named tags are matched,
+        which is what makes it safe to clean a note at all.
         """
         record = b.activity()
         record["notes"] = (
-            "Begin forwarded message:\r\n\r\n"
+            "1 DOUBLE BED<br>\r\n\r\n"
             'From: "no-reply@example.com" <no-reply@example.com>'
         )
 
-        stop = only(b.export(b.trip(objects=[record]))).activities[0]
+        notes = str(
+            only(b.export(b.trip(objects=[record]))).activities[0].notes
+        )
 
-        check.is_in("<no-reply@example.com>", str(stop.notes))
-        check.is_in("\n", str(stop.notes), "the line breaks are kept")
-
-    ####################################################################
-    #
-    def test_a_note_still_loses_a_real_tag(self) -> None:
-        """
-        GIVEN: a note ending in a stray line-break tag
-        WHEN:  it is parsed
-        THEN:  the tag goes and the words stay
-
-        '1 DOUBLE BED<br>' is a note in the corpus.  A named tag cannot
-        be an email address, so a note is cleaned like anything else.
-        """
-        record = b.activity()
-        record["notes"] = "1 DOUBLE BED<br>"
-
-        stop = only(b.export(b.trip(objects=[record]))).activities[0]
-
-        assert stop.notes == "1 DOUBLE BED"
+        check.is_not_in("<br>", notes, "a named tag goes")
+        check.is_in("<no-reply@example.com>", notes, "an address stays")
+        check.is_in("\n", notes, "the line breaks stay")
+        check.is_in("1 DOUBLE BED", notes, "the words stay")
 
 
 ########################################################################
@@ -891,11 +878,34 @@ class TestInstants:
 
     ####################################################################
     #
-    def test_a_stop_recorded_as_one_place_names_both_ends(self) -> None:
+    @pytest.mark.parametrize(
+        "segment,departure,arrival",
+        [
+            pytest.param(
+                {"location_name": "Togendai-ko"},
+                "Togendai-ko",
+                "Togendai-ko",
+                id="one-bare-place-names-both-ends",
+            ),
+            pytest.param(
+                {
+                    "start_location_name": "Gora",
+                    "end_location_name": "Sounzan",
+                    "location_name": "Togendai-ko",
+                },
+                "Gora",
+                "Sounzan",
+                id="a-named-route-wins-over-a-bare-place",
+            ),
+        ],
+    )
+    def test_a_stop_recorded_as_one_place_names_both_ends(
+        self, segment: dict[str, Any], departure: str, arrival: str
+    ) -> None:
         """
-        GIVEN: a segment naming a bare `location_name` and no route
+        GIVEN: a segment naming a bare place, a route, or both
         WHEN:  it is parsed
-        THEN:  that name labels both ends of the leg
+        THEN:  a route names its own ends, and a bare place names both
 
         A ferry or a cruise stop is recorded as a place called at rather
         than a journey between two, and the app draws an unlabelled
@@ -907,41 +917,15 @@ class TestInstants:
                     objects=[
                         self.segment(
                             StartDateTime=b.moment("2024-05-02", "13:00:00"),
-                            location_name="Togendai-ko",
+                            **segment,
                         )
                     ]
                 )
             )
         ).transportations[0]
 
-        check.equal(leg.departure_description, "Togendai-ko")
-        check.equal(leg.arrival_description, "Togendai-ko")
-
-    ####################################################################
-    #
-    def test_a_named_route_is_not_overwritten_by_a_bare_place(self) -> None:
-        """
-        GIVEN: a segment naming both ends of a route and a bare place too
-        WHEN:  it is parsed
-        THEN:  the route's own names win
-        """
-        leg = only(
-            b.export(
-                b.trip(
-                    objects=[
-                        self.segment(
-                            StartDateTime=b.moment("2024-05-02", "13:00:00"),
-                            start_location_name="Gora",
-                            end_location_name="Sounzan",
-                            location_name="Togendai-ko",
-                        )
-                    ]
-                )
-            )
-        ).transportations[0]
-
-        check.equal(leg.departure_description, "Gora")
-        check.equal(leg.arrival_description, "Sounzan")
+        check.equal(leg.departure_description, departure)
+        check.equal(leg.arrival_description, arrival)
 
 
 ########################################################################

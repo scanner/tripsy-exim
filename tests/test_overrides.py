@@ -282,38 +282,39 @@ class TestAdditions:
 
     ####################################################################
     #
-    def test_unknown_collection_is_refused(self, tmp_path: Path) -> None:
-        """
-        GIVEN: an addition naming a collection that does not exist
-        WHEN:  it is recorded
-        THEN:  it is refused, rather than failing later at upload time
-        """
-        overrides = OverrideSet(trip_uuid="t1")
-
-        with pytest.raises(ValueError):
-            overrides.add("a1", "restaurants", name="dinner")
-
-    ####################################################################
-    #
-    def test_a_field_that_cannot_be_stored_is_refused(self) -> None:
-        """
-        GIVEN: an addition whose instant is a datetime rather than text
-        WHEN:  it is recorded
-        THEN:  it is refused, naming the field and what to give instead
-
-        Additions are stored as JSON, so a datetime fails at save time --
-        long after the line that put it there.
-        """
-        from datetime import UTC, datetime
-
-        overrides = OverrideSet(trip_uuid="t1")
-
-        with pytest.raises(ValueError, match="departure_at"):
-            overrides.add(
-                "a1",
+    @pytest.mark.parametrize(
+        "collection,fields,names",
+        [
+            pytest.param(
+                "restaurants",
+                {"name": "dinner"},
+                "restaurants",
+                id="a-collection-tripsy-does-not-have",
+            ),
+            pytest.param(
                 "transportations",
-                departure_at=datetime(2024, 5, 3, tzinfo=UTC),
-            )
+                {"departure_at": datetime(2024, 5, 3, tzinfo=UTC)},
+                "departure_at",
+                id="a-value-that-cannot-be-stored",
+            ),
+        ],
+    )
+    def test_what_cannot_be_stored_is_refused_when_recorded(
+        self, collection: str, fields: dict[str, Any], names: str
+    ) -> None:
+        """
+        GIVEN: an addition naming an impossible collection or value
+        WHEN:  it is recorded
+        THEN:  it is refused, naming what was wrong
+
+        Additions are held as JSON, so a datetime failed at save time --
+        long after the line that put it there.  A bad collection failed
+        later still, at upload.
+        """
+        overrides = OverrideSet(trip_uuid="t1")
+
+        with pytest.raises(ValueError, match=names):
+            overrides.add("a1", collection, **fields)
 
     ####################################################################
     #
