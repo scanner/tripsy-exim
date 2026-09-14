@@ -241,7 +241,7 @@ class TestOnePasswordStore:
         )
         store = OnePasswordStore("op://Personal/Tripsy", binary="op")
 
-        store.put(TOKEN, "abc123")
+        store.put(TOKEN, "not-a-real-token")
 
         check.equal(
             run.call_args.args[0],
@@ -252,7 +252,7 @@ class TestOnePasswordStore:
                 "Tripsy",
                 "--vault",
                 "Personal",
-                "token[password]=abc123",
+                "token[password]=not-a-real-token",
             ],
         )
 
@@ -271,7 +271,7 @@ class TestOnePasswordStore:
         store = OnePasswordStore("op://Personal/Tripsy")
 
         with pytest.raises(SecretError, match="read-only item"):
-            store.put(TOKEN, "abc123")
+            store.put(TOKEN, "not-a-real-token")
 
     ####################################################################
     #
