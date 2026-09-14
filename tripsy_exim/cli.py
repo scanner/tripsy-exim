@@ -37,6 +37,7 @@ from tripsy_exim.geocode import (
     Cache,
     far_from,
     lookup_for,
+    normalised,
     placed,
     plausible,
 )
@@ -940,7 +941,11 @@ def verify_command(
 @click.option(
     "--write/--dry-run",
     default=False,
-    help="Actually send the positions to Tripsy.",
+    help=(
+        "Actually send the positions to Tripsy.  A dry run asks the "
+        "geocoder nothing and sends nothing; it reports what the cache "
+        "already answers and what would have to be looked up."
+    ),
 )
 @click.option("--username", default=None, help="Tripsy account username.")
 @click.option("--password", default=None, help="Tripsy account password.")
@@ -998,9 +1003,20 @@ def fix_locations_command(
     cache = Cache(cache_path)
     click.echo(f"cache: {cache.path}")
     for address in forget:
-        dropped = "forgotten" if cache.forget(address) else "was not held"
-        click.echo(f"  {address}: {dropped}")
-    if forget:
+        # Dropped from the cache in memory either way, so a dry run can
+        # report what forgetting leads to.  Only a write makes it
+        # durable: a cache that outlives the run is what Nominatim's
+        # terms rest on, and a plan does not get to shorten it.
+        #
+        # Keyed by the normalised form, which is how a lookup stored it.
+        #
+        dropped = cache.forget(normalised(address))
+        if not dropped:
+            state = "was not held"
+        else:
+            state = "forgotten" if write else "would be forgotten"
+        click.echo(f"  {address}: {state}")
+    if forget and write:
         cache.save()
 
     with open_session(username, password) as client:
@@ -1023,28 +1039,43 @@ def fix_locations_command(
             f"{len(addresses)} endpoints, {len(set(addresses))} distinct "
             f"addresses, {len(unknown)} to look up"
         )
-        if unknown and not write:
-            click.echo(
-                "Dry run.  Nothing is looked up and nothing is sent.  "
-                "Pass --write to place them."
-            )
-            for address in unknown[:20]:
-                click.echo(f"    would look up  {address}")
-            return
         if not addresses:
             click.echo("Nothing to place.")
             return
 
-        look = lookup_for(geocoder, **({"api_key": api_key} if api_key else {}))
-        answers = placed(addresses, look, cache)
-        click.echo(f"saved {cache.save()}")
+        # A dry run asks nobody anything.  A lookup is a request to an
+        # outside service under a policy that counts them, so it is an
+        # outward act of its own and not something a plan should do.  What
+        # the cache already holds is answered from here, which is what
+        # makes the run a preview rather than a list of addresses.
+        #
+        if write:
+            look = lookup_for(
+                geocoder, **({"api_key": api_key} if api_key else {})
+            )
+            answers = placed(addresses, look, cache)
+            click.echo(f"saved {cache.save()}")
+        else:
+            click.echo(
+                "Dry run.  Nothing is looked up and nothing is sent.  "
+                "Pass --write to place them."
+            )
+            answers = {}
+            for address in set(addresses):
+                held = cache.get(normalised(address))
+                if held is not None:
+                    answers[address] = held
 
-        sent = refused = blank = coarse = 0
+        sent = refused = blank = coarse = pending = 0
         for key, (trip_id, gaps) in work.items():
             named = staged_trip(archive, key)
             click.echo(f"\n{named.name if named else key}")
             for gap in gaps:
-                found = answers[gap.address]
+                found = answers.get(gap.address)
+                if found is None:
+                    pending += 1
+                    click.echo(f"    would look up  {gap.where}: {gap.address}")
+                    continue
                 if not found.placed or found.position is None:
                     blank += 1
                     click.echo(f"    no answer   {gap.where}: {gap.address}")
@@ -1058,30 +1089,34 @@ def fix_locations_command(
                     )
                     continue
                 lat, lon = found.position
-                client.update_child(
-                    trip_id,
-                    gap.collection,
-                    gap.child_id,
-                    {
-                        f"{gap.prefix}latitude": lat,
-                        f"{gap.prefix}longitude": lon,
-                    },
-                )
+                if write:
+                    client.update_child(
+                        trip_id,
+                        gap.collection,
+                        gap.child_id,
+                        {
+                            f"{gap.prefix}latitude": lat,
+                            f"{gap.prefix}longitude": lon,
+                        },
+                    )
                 sent += 1
                 # The label is what makes a wrong answer visible.  'Elko,
                 # NV' resolves to Elko County, 54 km from the town, and no
                 # distance check against the rest of a trip will see that.
                 #
-                mark = "COARSE  " if found.coarse else "placed  "
+                placing = "placed  " if write else "would place"
+                mark = "COARSE  " if found.coarse else placing
                 if found.coarse:
                     coarse += 1
                 click.echo(f"    {mark}    {gap.where}  {lat:.4f},{lon:.4f}")
                 click.echo(f"                    {found.label}")
 
     click.echo(
-        f"\n{sent} endpoints placed, {refused} refused as implausible, "
-        f"{blank} found nowhere"
+        f"\n{sent} endpoints {'placed' if write else 'would be placed'}, "
+        f"{refused} refused as implausible, {blank} found nowhere"
     )
+    if pending:
+        click.echo(f"{pending} endpoints need a lookup; pass --write")
     if coarse:
         click.echo(
             f"{coarse} matched something larger than the place asked for "
