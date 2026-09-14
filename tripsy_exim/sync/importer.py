@@ -939,3 +939,155 @@ def _remember(archive: Archive, identifier: str, trip_id: int) -> None:
 
 
 ########################################################################
+########################################################################
+#
+@dataclass(frozen=True)
+class Discrepancy:
+    """One way an uploaded object differs from what was planned."""
+
+    identifier: str
+    name: str
+    field: str
+    planned: Any
+    found: Any
+
+
+########################################################################
+########################################################################
+#
+@dataclass
+class TripCheck:
+    """What reading one uploaded trip back found."""
+
+    trip_key: str
+    name: str
+    trip_id: int | None = None
+    planned: int = 0
+
+    # Objects the plan asked for and the account holds.  Counted apart
+    # from `extra`, because an object added in the app is not one of the
+    # planned ones arriving: reading '2 of 1 objects' helps nobody.
+    #
+    matched: int = 0
+
+    # Planned objects the account does not hold.  Either the run stopped
+    # part way or a create was refused.
+    #
+    missing: list[str] = field(default_factory=list)
+
+    # Objects the account holds that the plan does not.  Added in the app
+    # after the upload, which is a normal thing to find.
+    #
+    extra: list[str] = field(default_factory=list)
+
+    differing: list[Discrepancy] = field(default_factory=list)
+
+    # Objects carrying an address that Tripsy has not resolved to a
+    # position.  Geocoding is asynchronous, so a fresh upload reads as
+    # unplaced for a while and is worth checking again rather than
+    # correcting.
+    #
+    unplaced: list[str] = field(default_factory=list)
+
+    ####################################################################
+    #
+    @property
+    def agrees(self) -> bool:
+        """Whether the account matches the plan in every checked respect."""
+        return not (self.missing or self.differing)
+
+
+####################################################################
+#
+def verify_trip(
+    client: TripsyClient, archive: Archive, trip_key: str
+) -> TripCheck:
+    """
+    Read one uploaded trip back and compare it against its plan.
+
+    The plan is the same computation the upload ran, so a difference is
+    either something the API refused, something the app changed, or
+    something a person edited afterwards.  Nothing is written: this says
+    what is there, and correcting it is a separate decision.
+
+    `sort_order` is worth the comparison on its own.  It is assigned on
+    first create and a re-run does not revisit it, so a trip that gained
+    an object later reads in the wrong order until it is repaired.
+
+    Args:
+        client: An authenticated client.
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to check.
+
+    Returns:
+        What the comparison found.
+    """
+    plan = plan_trip(archive, trip_key)
+    check = TripCheck(trip_key=trip_key, name=plan.name, planned=plan.total)
+
+    trip_id = client.trip_ids_by_identifier().get(plan.identifier)
+    if trip_id is None:
+        check.missing = [obj.identifier for obj in plan.objects]
+        return check
+    check.trip_id = trip_id
+
+    wanted = {obj.identifier: obj for obj in plan.objects}
+    seen: set[str] = set()
+    for collection in COLLECTION_ORDER:
+        for found in client.iter_children(trip_id, collection):
+            identifier = str(found.get("internal_identifier") or "")
+            if not identifier or identifier not in wanted:
+                check.extra.append(identifier or f"<unnamed {collection}>")
+                continue
+
+            seen.add(identifier)
+            check.matched += 1
+            planned = wanted[identifier]
+            _compare(check, planned, found, collection)
+
+    check.missing = sorted(set(wanted) - seen)
+    return check
+
+
+####################################################################
+#
+def _compare(
+    check: TripCheck,
+    planned: PlannedObject,
+    found: dict[str, Any],
+    collection: str,
+) -> None:
+    """Note every way one object differs from how it was planned."""
+    if collection != planned.collection:
+        check.differing.append(
+            Discrepancy(
+                planned.identifier,
+                planned.name,
+                "collection",
+                planned.collection,
+                collection,
+            )
+        )
+
+    order = found.get("sort_order")
+    if order != planned.sort_order:
+        check.differing.append(
+            Discrepancy(
+                planned.identifier,
+                planned.name,
+                "sort_order",
+                planned.sort_order,
+                order,
+            )
+        )
+
+    # Tripsy resolves an address to a position on its own, after the
+    # object is created, so an address with no position is a thing to
+    # look at again rather than a thing to correct.
+    #
+    for end in ("", "departure_", "arrival_"):
+        if found.get(f"{end}address") and found.get(f"{end}latitude") is None:
+            check.unplaced.append(f"{planned.name} ({end or 'the '}address)")
+
+
+########################################################################

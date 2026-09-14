@@ -20,7 +20,9 @@ from tripsy_exim.sync.enrich import (
 from tripsy_exim.sync.importer import (
     COLLECTION_ORDER,
     UPLOADED,
+    Discrepancy,
     PlannedObject,
+    TripCheck,
     TripImport,
     TripPlan,
     child_ids_by_identifier,
@@ -33,6 +35,7 @@ from tripsy_exim.sync.importer import (
     staged_trip,
     upload_trip,
     uploaded_trips,
+    verify_trip,
 )
 from tripsy_exim.sync.overrides import (
     OVERRIDES_DIRNAME,
@@ -73,6 +76,8 @@ __all__ = [
     "OverrideSet",
     "PlannedObject",
     "StagedTrip",
+    "Discrepancy",
+    "TripCheck",
     "TripImport",
     "TripPlan",
     "TripAlreadyArchived",
@@ -86,6 +91,7 @@ __all__ = [
     "plan_trip",
     "resolve_trip_key",
     "upload_trip",
+    "verify_trip",
     "uploaded_trips",
     "load_overrides",
     "overrides_path",

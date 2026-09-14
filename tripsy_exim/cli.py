@@ -54,6 +54,7 @@ from tripsy_exim.sync.importer import (
     undo_merge,
     upload_trip,
     uploaded_trips,
+    verify_trip,
 )
 
 
@@ -739,6 +740,124 @@ def upload_command(
         for failure in failures[:20]:
             click.echo(f"  {failure}")
         raise click.ClickException(f"{len(failures)} objects failed")
+
+
+####################################################################
+#
+@main.command("verify")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--trip",
+    "wanted",
+    multiple=True,
+    help=(
+        "Check only this trip, named by part of its name or by its key.  "
+        "Repeatable; default is every trip an earlier run finished."
+    ),
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Check at most this many trips, oldest first.",
+)
+@click.option("--username", default=None, help="Tripsy account username.")
+@click.option("--password", default=None, help="Tripsy account password.")
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="List every object the account holds that the plan does not.",
+)
+def verify_command(
+    archive_root: Path | None,
+    wanted: tuple[str, ...],
+    limit: int | None,
+    username: str | None,
+    password: str | None,
+    verbose: bool,
+) -> None:
+    """
+    Read uploaded trips back from Tripsy and compare them to the plan.
+
+    Nothing is written.  This reports what is there against what was
+    meant to be there: objects that never arrived, objects the plan does
+    not know about, and any `sort_order` that does not match.
+
+    It also lists objects carrying an address Tripsy has not yet resolved
+    to a position.  Geocoding runs after the create, so a trip checked
+    moments after uploading reads as unplaced and is worth checking again
+    before anything is corrected.
+    """
+    archive = staged_archive(archive_root)
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = sorted(uploaded_trips(archive))
+    if not keys:
+        raise click.ClickException(
+            f"no trips have been uploaded from {archive.root}"
+        )
+
+    keys = in_travel_order(archive, keys)
+    if limit is not None:
+        keys = keys[:limit]
+
+    agreed = 0
+    unplaced = 0
+    with open_session(username, password) as client:
+        for key in keys:
+            result = verify_trip(client, archive, key)
+            unplaced += len(result.unplaced)
+            mark = "ok" if result.agrees else "DIFFERS"
+            extra = (
+                f", {len(result.extra)} more in the account"
+                if result.extra
+                else ""
+            )
+            click.echo(
+                f"\n{result.name or result.trip_key}  [{mark}]  "
+                f"{result.matched} of {result.planned} planned{extra}"
+            )
+            if result.agrees:
+                agreed += 1
+            for identifier in result.missing:
+                click.echo(f"    missing   {identifier}")
+            for bad in result.differing:
+                click.echo(
+                    f"    {bad.field:10} {bad.name[:34]:34} "
+                    f"planned {bad.planned!r}, found {bad.found!r}"
+                )
+            if result.extra and verbose:
+                for identifier in result.extra:
+                    click.echo(f"    not in the plan   {identifier}")
+            if result.unplaced:
+                click.echo(
+                    f"    {len(result.unplaced)} addresses not yet placed"
+                )
+                if verbose:
+                    for label in result.unplaced:
+                        click.echo(f"        {label}")
+
+    click.echo(f"\n{agreed} of {len(keys)} trips match their plan")
+    if unplaced:
+        click.echo(
+            f"{unplaced} addresses carry no position yet.  Tripsy geocodes "
+            "after the create, so check again before correcting any."
+        )
 
 
 if __name__ == "__main__":

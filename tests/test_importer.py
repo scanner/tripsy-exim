@@ -35,6 +35,7 @@ from tripsy_exim.sync.importer import (
     staged_trip,
     undo_merge,
     upload_trip,
+    verify_trip,
 )
 from tripsy_exim.sync.overrides import OverrideSet, save_overrides
 
@@ -855,6 +856,118 @@ class TestAdditions:
         stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
 
         check.equal(added(archive, archive.trip_keys()[0]), [])
+
+
+########################################################################
+########################################################################
+#
+class TestVerify:
+    """Tests for reading an uploaded trip back and checking it."""
+
+    ####################################################################
+    #
+    def test_a_trip_uploaded_whole_agrees_with_its_plan(
+        self, staged: Archive, api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: a trip uploaded in full
+        WHEN:  it is read back and compared
+        THEN:  nothing is missing, nothing differs
+        """
+        trip_key = only_key(staged)
+        upload_trip(api_client, staged, trip_key)
+
+        result = verify_trip(api_client, staged, trip_key)
+
+        check.is_true(result.agrees)
+        check.equal(result.missing, [])
+        check.equal(result.differing, [])
+        check.equal(result.matched, result.planned)
+
+    ####################################################################
+    #
+    def test_a_trip_never_uploaded_reads_as_wholly_missing(
+        self, staged: Archive, api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: a staged trip nothing has uploaded
+        WHEN:  it is read back and compared
+        THEN:  every planned object is reported missing
+
+        Rather than an error: 'none of it is there' is an answer, and it
+        is the answer after a run that failed before it started.
+        """
+        trip_key = only_key(staged)
+        plan = plan_trip(staged, trip_key)
+
+        result = verify_trip(api_client, staged, trip_key)
+
+        check.is_none(result.trip_id)
+        check.equal(len(result.missing), plan.total)
+        check.is_false(result.agrees)
+
+    ####################################################################
+    #
+    def test_an_object_deleted_in_the_app_reads_as_missing(
+        self, staged: Archive, api_client: TripsyClient, paced_tripsy: Any
+    ) -> None:
+        """
+        GIVEN: an uploaded trip one of whose objects was then removed
+        WHEN:  it is read back and compared
+        THEN:  that object, and only that object, is reported missing
+
+        Which is the case worth catching: the upload said it created the
+        object, so nothing local knows it has gone.
+        """
+        trip_key = only_key(staged)
+        result = upload_trip(api_client, staged, trip_key)
+        assert result.trip_id is not None
+
+        gone = next(
+            iter(
+                child_ids_by_identifier(
+                    api_client, result.trip_id, "transportations"
+                ).items()
+            )
+        )
+        api_client.delete_child(result.trip_id, "transportations", gone[1])
+
+        checked = verify_trip(api_client, staged, trip_key)
+
+        check.equal(checked.missing, [gone[0]])
+        check.is_false(checked.agrees)
+
+    ####################################################################
+    #
+    def test_an_object_added_in_the_app_is_reported_not_missed(
+        self, staged: Archive, api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: an uploaded trip that gained an object in the app
+        WHEN:  it is read back and compared
+        THEN:  the object is reported as extra, and the trip still agrees
+
+        Editing in the app is the point of the import, so an object the
+        plan does not know about is news rather than a fault.
+        """
+        trip_key = only_key(staged)
+        result = upload_trip(api_client, staged, trip_key)
+        assert result.trip_id is not None
+        api_client.create_child(
+            result.trip_id,
+            "activities",
+            {"name": "added in the app", "internal_identifier": "app-1"},
+        )
+
+        checked = verify_trip(api_client, staged, trip_key)
+
+        check.equal(checked.extra, ["app-1"])
+        check.equal(
+            checked.matched,
+            checked.planned,
+            "every planned object is still accounted for",
+        )
+        check.is_true(checked.agrees, "an addition is not a disagreement")
 
 
 ########################################################################
