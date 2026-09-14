@@ -32,6 +32,7 @@ from pytest_mock import MockerFixture
 from tests import ics_builder, tripit_builder
 from tests.clock import FakeClock
 from tests.factories import (
+    ActivityFactory,
     ActivityPayloadFactory,
     CollaboratorPayloadFactory,
     ExpensePayloadFactory,
@@ -69,6 +70,8 @@ register(CollaboratorPayloadFactory, "collaborator_payload")
 register(TripFactory)
 # HostingFactory -> fixtures hosting, hosting_factory
 register(HostingFactory)
+# ActivityFactory -> fixtures activity, activity_factory
+register(ActivityFactory)
 
 
 # One seed behind every generator in the suite.  Override it to shake out

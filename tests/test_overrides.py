@@ -4,6 +4,7 @@
 
 # system imports
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,9 @@ class TestRetyped:
 
     ####################################################################
     #
-    def test_whole_fields_split_across_departure_and_arrival(self) -> None:
+    def test_whole_fields_split_across_departure_and_arrival(
+        self, activity_factory: Callable[..., Activity]
+    ) -> None:
         """
         GIVEN: an activity with a start, an end and a place
         WHEN:  it is retyped as a transportation
@@ -64,9 +67,7 @@ class TestRetyped:
         ends, measured across the whole reference corpus.  A journey
         named for both ends still only records one of them.
         """
-        activity = Activity(
-            internal_identifier="txim-x",
-            name="JR Tokyo to Kyoto",
+        activity = activity_factory(
             starts_at=datetime(2027, 1, 1, 9, tzinfo=UTC),
             ends_at=datetime(2027, 1, 1, 11, tzinfo=UTC),
             timezone="Asia/Tokyo",
@@ -87,7 +88,9 @@ class TestRetyped:
         "target", [Hosting, Transportation, Activity], ids=lambda t: t.__name__
     )
     def test_identity_and_name_always_survive(
-        self, target: type[CanonicalModel]
+        self,
+        target: type[CanonicalModel],
+        activity: Activity,
     ) -> None:
         """
         GIVEN: an activity
@@ -97,23 +100,22 @@ class TestRetyped:
         The identifier is what keys the file, so a retype that lost it
         would strand the object rather than move it.
         """
-        activity = Activity(internal_identifier="txim-x", name="a name")
-
         moved = retyped(activity, target).model_dump()
 
-        check.equal(moved["internal_identifier"], "txim-x")
-        check.equal(moved["name"], "a name")
+        check.equal(moved["internal_identifier"], activity.internal_identifier)
+        check.equal(moved["name"], activity.name)
 
     ####################################################################
     #
-    def test_round_trip_restores_the_whole_fields(self) -> None:
+    def test_round_trip_restores_the_whole_fields(
+        self, activity_factory: Callable[..., Activity]
+    ) -> None:
         """
         GIVEN: an activity retyped to a transportation
         WHEN:  it is retyped back
         THEN:  the original time and place return
         """
-        activity = Activity(
-            internal_identifier="txim-x",
+        activity = activity_factory(
             starts_at=datetime(2027, 1, 1, 9, tzinfo=UTC),
             ends_at=datetime(2027, 1, 1, 11, tzinfo=UTC),
             address="Tokyo Station",
