@@ -27,13 +27,22 @@ only answer by reading prose.
 
 # system imports
 import json
+import re
 from datetime import UTC, date, datetime, time, tzinfo
+from html import unescape
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 from zoneinfo import ZoneInfo
 
 # Project imports
-from tripsy_exim.models import Activity, Hosting, Transportation, Trip, mint
+from tripsy_exim.models import (
+    Activity,
+    CanonicalModel,
+    Hosting,
+    Transportation,
+    Trip,
+    mint,
+)
 from tripsy_exim.sources.ics import (
     ACTIVITY,
     HOSTING,
@@ -94,6 +103,21 @@ _ROADTRIP = "roadtrip"
 # How TripIt names and shapes a map pin.  Observed across 66 of them in
 # a real export, all alike.
 #
+# The tags the export is actually seen to leak, named rather than
+# matched loosely: '<no-reply@example.com>' in a forwarded note is an
+# address, not markup, and a pattern for anything bracketed would eat it.
+#
+_TAGS = r"a|b|br|div|em|font|i|li|p|span|strong|table|td|tr|ul"
+
+_MARKUP = re.compile(rf"</?(?:{_TAGS})\b[^>]*>", re.I)
+
+# The export also truncates a scraped field in the middle of a tag, which
+# leaves a fragment with no closing bracket: 'Wi-fi Internet</td&'.  Only
+# a fragment that begins like one of those tags and runs to the end of
+# the string counts, so a sentence containing a '<' is left alone.
+#
+_TRUNCATED = re.compile(rf"</?(?:{_TAGS})\b[^>]*$", re.I)
+
 _MAP_PREFIX = "Map of "
 _MAP_SHAPE = frozenset({"Address", "DateTime", "display_name"})
 
@@ -499,12 +523,22 @@ def _parse_object(
             )
             continue
 
-        starts, start_zone, all_day = _instant(
-            source.get("StartDateTime") or source.get("DateTime")
-        )
-        ends, end_zone, _ = _instant(
-            source.get("EndDateTime") or source.get("StartDateTime")
-        )
+        # Each end is read in its own zone, and an end the export left
+        # unplaced borrows the other's: both ends belong to one journey,
+        # so the far end is a better reading than UTC.  An end that gave
+        # a date and no time recorded no arrival at all -- midnight in
+        # its own zone is not when the journey finished -- so it is
+        # dropped rather than sent as a time before the departure.
+        #
+        began = source.get("StartDateTime") or source.get("DateTime")
+        finished = source.get("EndDateTime")
+
+        starts, start_zone, all_day = _instant(began)
+        ends, end_zone, ends_all_day = _instant(finished, fallback=start_zone)
+        if start_zone is None and end_zone is not None:
+            starts, start_zone, all_day = _instant(began, fallback=end_zone)
+        if ends is not None and ends_all_day and not all_day:
+            ends, end_zone = None, None
 
         parts = (
             trip_token,
@@ -528,6 +562,7 @@ def _parse_object(
             end_zone,
             all_day,
         )
+        built = _tidied(built)
         if isinstance(built, Hosting):
             parsed.hostings.append(built)
         elif isinstance(built, Transportation):
@@ -792,8 +827,51 @@ def _segments(obj: dict[str, Any]) -> list[dict[str, Any]]:
 
 ####################################################################
 #
+def _tidied[M: CanonicalModel](obj: M) -> M:
+    """
+    Take the markup out of what the export scraped off a web page.
+
+    A hotel's room description arrives as a fragment of the booking page
+    it came from -- '<strong>One King Bed</strong><br>' -- and an address
+    arrives with its ampersand still escaped.  Both are stored and
+    uploaded verbatim unless they are cleaned here.
+
+    Only real tags go.  A forwarded email in a note puts an address in
+    angle brackets, and that is content: the pattern names the handful of
+    tags the export actually produces, so it cannot match one.  That is
+    what makes it safe to clean a note as well.  Notes keep their line
+    breaks; every other text field is reduced to one line.
+
+    Args:
+        obj: A freshly built object.
+
+    Returns:
+        The object, or a cleaned copy where anything needed cleaning.
+    """
+    updates: dict[str, Any] = {}
+    for name, value in obj:
+        if not isinstance(value, str):
+            continue
+        stripped = _TRUNCATED.sub(" ", _MARKUP.sub(" ", unescape(value)))
+        if name == "notes":
+            # A note is prose and keeps its line breaks; only trailing
+            # space left behind by a tag goes.
+            #
+            cleaned = "\n".join(
+                line.rstrip() for line in stripped.splitlines()
+            ).strip()
+        else:
+            cleaned = " ".join(stripped.split())
+        if cleaned != value:
+            updates[name] = cleaned or None
+    return obj.model_copy(update=updates) if updates else obj
+
+
+####################################################################
+#
 def _instant(
     value: Any,
+    fallback: str | None = None,
 ) -> tuple[datetime | None, str | None, bool]:
     """
     Turn one exported DateTime into a UTC instant.
@@ -801,13 +879,18 @@ def _instant(
     The export gives a date, usually a time, and usually both an IANA
     zone and the offset that applied on the day.  The offset is preferred
     where it exists: it is what TripIt recorded at the time, so it stays
-    correct even where a zone's rules have since changed.
+    correct even where a zone's rules have since changed.  Where the
+    record carries neither, `fallback` names the zone the clock is read
+    in -- the other end of the same journey is a far better guess than
+    UTC for a leg TripIt only half-placed.
 
     A record with no time is an all-day entry and is read as midnight in
     its own zone, which is the same reading `.ics` date-only events get.
 
     Args:
         value: A `DateTime` mapping, or anything else.
+        fallback: IANA zone to read the clock in when the record names
+            no zone and no offset.
 
     Returns:
         The instant in UTC, the zone it was expressed in, and whether the
@@ -831,6 +914,7 @@ def _instant(
     if offset is not None:
         return moment.replace(tzinfo=offset).astimezone(UTC), zone, all_day
 
+    zone = zone or fallback
     loaded: ZoneInfo | None = _zoneinfo(zone)
     return moment.replace(tzinfo=loaded or UTC).astimezone(UTC), zone, all_day
 
@@ -1024,6 +1108,10 @@ def _endpoint_label(source: dict[str, Any], end: str) -> str | None:
     outright.  A station or a stop has no code, so it gives its name.
     The address is a separate field and stays the address.
 
+    A ferry or a cruise stop is recorded as a single place rather than a
+    route, under a bare `location_name`; that one name stands for both
+    ends of the record.
+
     Args:
         source: The segment, or the record when there are no segments.
         end: 'start' or 'end'.
@@ -1035,6 +1123,7 @@ def _endpoint_label(source: dict[str, Any], end: str) -> str | None:
         f"{end}_airport_code",
         f"{end}_station_name",
         f"{end}_location_name",
+        "location_name",
     ):
         value = source.get(key)
         if value:

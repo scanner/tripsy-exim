@@ -684,6 +684,269 @@ class TestParsing:
 ########################################################################
 ########################################################################
 #
+class TestMarkup:
+    """Tests for text the export scraped off a page rather than a record."""
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("<strong>One King Bed</strong><br>", "One King Bed"),
+            ("Semi double<br>", "Semi double"),
+            (
+                '</span> <br> <span class="labelText">Wi-fi Internet</span>',
+                "Wi-fi Internet",
+            ),
+            ("Plain Room", "Plain Room"),
+            pytest.param(
+                "Wi-fi Internet</span></td&",
+                "Wi-fi Internet",
+                id="truncated-mid-tag",
+            ),
+            pytest.param(
+                "Room 5 < 10 people",
+                "Room 5 < 10 people",
+                id="a-bare-angle-bracket-is-not-a-tag",
+            ),
+        ],
+    )
+    def test_a_room_description_loses_its_markup(
+        self, raw: str, expected: str
+    ) -> None:
+        """
+        GIVEN: a lodging whose room type came off a booking page
+        WHEN:  it is parsed
+        THEN:  the text survives and the tags do not
+
+        The field is writable, so markup left in it is uploaded verbatim.
+        """
+        record = b.lodging()
+        record["room_type"] = raw
+
+        stay = only(b.export(b.trip(objects=[record]))).hostings[0]
+
+        assert stay.room_type == expected
+
+    ####################################################################
+    #
+    def test_an_escaped_ampersand_becomes_an_ampersand(self) -> None:
+        """
+        GIVEN: an address carrying an HTML entity
+        WHEN:  it is parsed
+        THEN:  the entity is decoded
+
+        'California St &amp; 14th St' is what the export gives, and what
+        Tripsy would show unless it is decoded here.
+        """
+        record = b.ground()
+        record["Segment"][0]["StartLocationAddress"] = {
+            "address": "California St &amp; 14th St Denver, CO 80202"
+        }
+
+        leg = only(b.export(b.trip(objects=[record]))).transportations[0]
+
+        assert (
+            leg.departure_address == "California St & 14th St Denver, CO 80202"
+        )
+
+    ####################################################################
+    #
+    def test_a_forwarded_email_keeps_its_addresses(self) -> None:
+        """
+        GIVEN: a note holding a forwarded email
+        WHEN:  it is parsed
+        THEN:  the bracketed address survives, and the line breaks do
+
+        An address in angle brackets is content.  A pattern for anything
+        bracketed would eat it, which is why only real tags are matched.
+        """
+        record = b.activity()
+        record["notes"] = (
+            "Begin forwarded message:\r\n\r\n"
+            'From: "no-reply@example.com" <no-reply@example.com>'
+        )
+
+        stop = only(b.export(b.trip(objects=[record]))).activities[0]
+
+        check.is_in("<no-reply@example.com>", str(stop.notes))
+        check.is_in("\n", str(stop.notes), "the line breaks are kept")
+
+    ####################################################################
+    #
+    def test_a_note_still_loses_a_real_tag(self) -> None:
+        """
+        GIVEN: a note ending in a stray line-break tag
+        WHEN:  it is parsed
+        THEN:  the tag goes and the words stay
+
+        '1 DOUBLE BED<br>' is a note in the corpus.  A named tag cannot
+        be an email address, so a note is cleaned like anything else.
+        """
+        record = b.activity()
+        record["notes"] = "1 DOUBLE BED<br>"
+
+        stop = only(b.export(b.trip(objects=[record]))).activities[0]
+
+        assert stop.notes == "1 DOUBLE BED"
+
+
+########################################################################
+########################################################################
+#
+class TestInstants:
+    """Tests for the times and places a half-recorded leg is read with."""
+
+    ####################################################################
+    #
+    def segment(self, **fields: Any) -> dict[str, Any]:
+        """One ground-transport record holding one segment."""
+        return {
+            "display_name": "Example",
+            "detail_type_code": "G",
+            "Segment": [fields],
+        }
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "end",
+        [
+            pytest.param(b.moment("2024-05-02", None), id="date-only"),
+            pytest.param(None, id="absent"),
+        ],
+    )
+    def test_an_end_the_export_did_not_record_is_not_invented(
+        self, end: dict[str, str] | None
+    ) -> None:
+        """
+        GIVEN: a leg whose departure has a time but whose arrival has none
+        WHEN:  it is parsed
+        THEN:  no arrival comes out
+
+        Midnight in the departure's own zone reads as an arrival hours
+        before the departure, which is worse than no arrival at all.
+        """
+        record = self.segment(StartDateTime=b.moment("2024-05-02", "13:00:00"))
+        if end is not None:
+            record["Segment"][0]["EndDateTime"] = end
+
+        leg = only(b.export(b.trip(objects=[record]))).transportations[0]
+
+        check.is_not_none(leg.departure_at)
+        check.is_none(leg.arrival_at)
+        check.is_none(leg.arrival_timezone)
+
+    ####################################################################
+    #
+    def test_a_day_long_record_keeps_the_day_it_covers(self) -> None:
+        """
+        GIVEN: an all-day record, dated at both ends and timed at neither
+        WHEN:  it is parsed
+        THEN:  both instants survive
+
+        An all-day record is a real span, not a missing end.
+        """
+        stop = only(
+            b.export(b.trip(objects=[b.activity(all_day=True)]))
+        ).activities[0]
+
+        check.is_not_none(stop.starts_at)
+        check.is_not_none(stop.ends_at)
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize("unplaced", ["StartDateTime", "EndDateTime"])
+    def test_an_unplaced_end_is_read_in_the_other_end_s_zone(
+        self, unplaced: str
+    ) -> None:
+        """
+        GIVEN: a leg one of whose ends carries neither zone nor offset
+        WHEN:  it is parsed
+        THEN:  it is read in the zone the other end named, not in UTC
+
+        Both ends belong to one journey.  Reading a Tokyo clock as UTC
+        moves it nine hours and puts the arrival before the departure.
+        """
+        placed = {
+            "StartDateTime": b.moment("2024-05-02", "13:00:00"),
+            "EndDateTime": b.moment("2024-05-02", "15:00:00"),
+        }
+        bare = b.moment(
+            "2024-05-02",
+            placed[unplaced]["time"],
+            zone=None,
+            offset=None,
+        )
+        leg = only(
+            b.export(
+                b.trip(objects=[self.segment(**placed | {unplaced: bare})])
+            )
+        ).transportations[0]
+
+        check.equal(leg.departure_at, datetime(2024, 5, 2, 4, tzinfo=UTC))
+        check.equal(leg.arrival_at, datetime(2024, 5, 2, 6, tzinfo=UTC))
+        check.equal(leg.departure_timezone, "Asia/Tokyo")
+        check.equal(leg.arrival_timezone, "Asia/Tokyo")
+
+    ####################################################################
+    #
+    def test_a_stop_recorded_as_one_place_names_both_ends(self) -> None:
+        """
+        GIVEN: a segment naming a bare `location_name` and no route
+        WHEN:  it is parsed
+        THEN:  that name labels both ends of the leg
+
+        A ferry or a cruise stop is recorded as a place called at rather
+        than a journey between two, and the app draws an unlabelled
+        endpoint as nothing at all.
+        """
+        leg = only(
+            b.export(
+                b.trip(
+                    objects=[
+                        self.segment(
+                            StartDateTime=b.moment("2024-05-02", "13:00:00"),
+                            location_name="Togendai-ko",
+                        )
+                    ]
+                )
+            )
+        ).transportations[0]
+
+        check.equal(leg.departure_description, "Togendai-ko")
+        check.equal(leg.arrival_description, "Togendai-ko")
+
+    ####################################################################
+    #
+    def test_a_named_route_is_not_overwritten_by_a_bare_place(self) -> None:
+        """
+        GIVEN: a segment naming both ends of a route and a bare place too
+        WHEN:  it is parsed
+        THEN:  the route's own names win
+        """
+        leg = only(
+            b.export(
+                b.trip(
+                    objects=[
+                        self.segment(
+                            StartDateTime=b.moment("2024-05-02", "13:00:00"),
+                            start_location_name="Gora",
+                            end_location_name="Sounzan",
+                            location_name="Togendai-ko",
+                        )
+                    ]
+                )
+            )
+        ).transportations[0]
+
+        check.equal(leg.departure_description, "Gora")
+        check.equal(leg.arrival_description, "Sounzan")
+
+
+########################################################################
+########################################################################
+#
 class TestGeneratedExports:
     """Tests over whole generated itineraries, TripIt's encoding included."""
 
