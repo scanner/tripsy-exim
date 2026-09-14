@@ -1,0 +1,76 @@
+# merge(1) -- upload one staged trip as part of another
+
+## SYNOPSIS
+
+```text
+tripsy-exim merge [--archive DIRECTORY] ABSORBED TARGET
+tripsy-exim merge [--archive DIRECTORY] --undo ABSORBED
+```
+
+## DESCRIPTION
+
+Declares that one staged trip should be uploaded into another rather than
+created as a trip of its own. Nothing is sent to Tripsy, and no
+credentials are needed.
+
+One journey can reach the archive as two trips. A TripIt export records a
+trip per traveller, so a holiday taken together arrives twice -- each
+copy holding that traveller's own flights and their own room, under
+different trip uuids. Uploading both makes two rival trips out of one
+journey, and no amount of editing in the app merges them afterwards.
+
+Nothing moves on disk. Both trips stay exactly as the parser produced
+them, which is what keeps staging lossless and the declaration
+reversible. The declaration is recorded in the manifest and read at
+upload time and nowhere else.
+
+At upload, `ABSORBED` is never created. Its objects are written into
+`TARGET`, taking their place in that trip's single `sort_order` sequence.
+Its own trip key stays in the archive, marked `->` by
+[list(1)](list.md).
+
+Trips are named by **key**, not by name -- the trips this is for share a
+name, which is usually how they were found in the first place. Get the
+keys from `tripsy-exim list`.
+
+Declare the merge before uploading either trip. Once a trip has been
+created in Tripsy its identifier is spent, and merging it afterwards
+would leave the rival trip standing.
+
+## OPTIONS
+
+`--undo`
+: Release `ABSORBED` so it uploads as its own trip again. Takes no
+  `TARGET`.
+
+`--archive DIRECTORY`
+: Where the staged trips are read from. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+
+## DIAGNOSTICS
+
+The declaration is refused when:
+
+- the two keys are the same trip
+- either key is not staged
+- `TARGET` is itself absorbed into something else -- a chain nobody
+  intended. Merge into the trip at the end of it instead.
+
+## EXAMPLES
+
+Find the duplicate pair, then declare one into the other:
+
+```sh
+tripsy-exim list | grep 'Lakeside'
+tripsy-exim merge txim-tripit-json-g01-3ec9308... txim-tripit-json-g01-2e2e0dc...
+tripsy-exim upload --dry-run --trip txim-tripit-json-g01-2e2e0dc...
+```
+
+## FILES
+
+Records the declaration under `merged_trips` in
+`<archive>/manifest.json`.
+
+## SEE ALSO
+
+[list(1)](list.md), [upload(1)](upload.md), [archive(7)](archive.md)

@@ -21,9 +21,11 @@ again, you move with your data.
 
 ## Status
 
-Early. The project layout, tooling, API research, and the API client are
-in place; the importers and the exporter are not written yet. Nothing here
-talks to Tripsy today.
+The import path works end to end: a TripIt GDPR export or a `.ics` is
+parsed into a local archive, corrected there, uploaded to Tripsy, read
+back and checked, and anything Tripsy left unplaced on the map is
+geocoded afterwards. The export side -- pulling a whole Tripsy account
+back down into the archive -- is not written yet.
 
 See [CHANGELOG.md](CHANGELOG.md) for what has actually shipped.
 
@@ -46,31 +48,77 @@ duration of the run.
 
 Resolution order, first match wins:
 
-1. A command line flag
-2. An environment variable
-3. `.env`
-4. 1Password, via the `op` CLI
+1. `--username` / `--password` on the command
+2. `TRIPSY_USERNAME` / `TRIPSY_PASSWORD` in the environment, or in `.env`
+3. A secret store named by `TRIPSY_SECRET_URL`
 
-The 1Password form is preferred for scheduled runs, since it keeps
-plaintext credentials out of the environment entirely:
+The store is last because it is the one form that keeps a plaintext
+password out of the environment entirely, so anything more explicit is a
+deliberate override of it. It is the form to prefer for scheduled runs:
 
 ```sh
-export TRIPSY_ONEPASSWORD_URL="op://Personal/Tripsy"
+export TRIPSY_SECRET_URL="op://Personal/Tripsy"
 ```
 
-That is an *item* URL. Its `username` and `password` fields are read with
-`op read` when a command needs to authenticate.
+That is a 1Password *item* URL; its `username` and `password` fields are
+read with the `op` CLI when a command needs to authenticate. Set
+`TRIPSY_OP_BIN` if `op` is not on the `PATH`. The `hcvault://` scheme is
+reserved for HashiCorp Vault and is not implemented yet.
+
+Commands that only read or write the archive -- `stage`, `stage-export`,
+`list`, `merge`, and `upload` without `--write` -- need no credentials at
+all.
+
+## Workflow
+
+```sh
+tripsy-exim stage-export ~/Downloads/tripit-export/export.json
+tripsy-exim list
+tripsy-exim upload --limit 1 --verbose     # plan only; the default
+tripsy-exim upload --limit 1 --write
+tripsy-exim verify --limit 1
+tripsy-exim fix-locations --trip 'Lakeside' --write
+```
+
+Staging never touches the network, and `upload` plans and prints without
+`--write`. That order is deliberate: Tripsy never releases an
+`internal_identifier`, so an object created by mistake cannot be undone
+by deleting it. Read the plan first.
+
+Everything lands in one directory -- the archive -- named by `--archive`,
+or `$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`. What
+the parser inferred is written there; corrections are kept beside it and
+laid over on the way out, so re-staging never clobbers a decision made by
+hand. See [archive(7)](docs/archive.md).
+
+## Documentation
+
+One page per command, plus one on the archive itself:
+
+| Page | |
+|---|---|
+| [stage(1)](docs/stage.md) | Parse `.ics` files into the archive |
+| [stage-export(1)](docs/stage-export.md) | Parse a TripIt GDPR export into the archive |
+| [list(1)](docs/list.md) | List the staged trips and what has been uploaded |
+| [merge(1)](docs/merge.md) | Upload one staged trip as part of another |
+| [upload(1)](docs/upload.md) | Send staged trips to Tripsy |
+| [verify(1)](docs/verify.md) | Read them back and compare against the plan |
+| [fix-locations(1)](docs/fix-locations.md) | Geocode what Tripsy left without a position |
+| [archive(7)](docs/archive.md) | The archive on disk, identifiers, overrides, the manifest |
 
 ## Repository layout
 
 ```text
 tripsy_exim/
-  api/       transport, auth, pagination, retries, error mapping, routes
-  models/    canonical trip models and the local archive schema
-  sources/   parsers turning an external format into canonical trips
-  store/     the local archive on disk, plus the sync manifest
-  sync/      importer and exporter -- all trip-level policy
-  cli.py     command line entry point and credential resolution
+  api/        transport, auth, pagination, retries, error mapping, routes
+  models/     canonical trip models, identifiers, the archive schema
+  sources/    parsers turning an external format into canonical trips
+  store/      the local archive on disk, plus the sync manifest
+  sync/       importer, overrides, verification -- all trip-level policy
+  geocode.py  positions for what Tripsy will not place itself
+  secrets.py  resolving credentials from a secret store
+  cli.py      command line entry point
+docs/         one page per command, plus the archive
 ```
 
 The canonical models are the hinge. Parsers target them, the importer
@@ -146,6 +194,12 @@ make help       # every target
 
 Tests run against an in-memory fake of the Tripsy API, so the whole suite
 works without credentials and without touching the real service.
+
+A `probe_scripts/` directory may be present locally. Those are one-off
+scripts run by hand against the live API to answer a question about how
+Tripsy actually behaves -- what it geocodes, what it accepts. They are
+not part of the package, are not tested, and are deliberately not
+committed.
 
 ### No personal data in this repository
 
