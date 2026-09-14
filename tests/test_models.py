@@ -11,6 +11,7 @@ from typing import Any
 # 3rd party imports
 import pytest
 import pytest_check as check
+from faker import Faker
 from pydantic import ValidationError
 
 # Project imports
@@ -115,35 +116,47 @@ class TestPassthrough:
     ####################################################################
     #
     def test_wire_and_source_extras_stay_separable(
-        self, hosting_payload_factory: Callable[..., dict[str, Any]]
+        self,
+        faker: Faker,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: a hosting carrying both undocumented Tripsy fields and a
                source field Tripsy has nowhere to put
         WHEN:  its passthrough views are read
         THEN:  both are retained and the two remain distinguishable
+
+        The values are generated and named once, so what goes in is what
+        is looked for afterwards.  A literal repeated in both halves can
+        agree with itself while the code drops the field entirely.
         """
+        unique_identifier = faker.pystr(min_chars=12, max_chars=12)
+        icon = faker.word()
+        segment_id = str(faker.uuid4())
         hosting = Hosting.model_validate(
             hosting_payload_factory(
-                tripsy_unique_identifier="XQQn4gUzYnh4", custom_icon="bed"
+                tripsy_unique_identifier=unique_identifier, custom_icon=icon
             )
-        ).with_source(tripit_segment_id="abc-123")
+        ).with_source(tripit_segment_id=segment_id)
 
         check.equal(
             hosting.wire_extras,
-            {"tripsy_unique_identifier": "XQQn4gUzYnh4", "custom_icon": "bed"},
+            {
+                "tripsy_unique_identifier": unique_identifier,
+                "custom_icon": icon,
+            },
             "undocumented Tripsy fields",
         )
         check.equal(
             hosting.source_extras,
-            {"tripit_segment_id": "abc-123"},
+            {"tripit_segment_id": segment_id},
             "source-only fields",
         )
         check.equal(
             hosting.model_dump(exclude_unset=True).get(
                 "tripsy_unique_identifier"
             ),
-            "XQQn4gUzYnh4",
+            unique_identifier,
             "extras take part in a dump",
         )
 
@@ -196,7 +209,9 @@ class TestWritablePayload:
     ####################################################################
     #
     def test_payload_carries_only_writable_fields(
-        self, hosting_payload_factory: Callable[..., dict[str, Any]]
+        self,
+        faker: Faker,
+        hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: a hosting carrying read-only, undocumented, and source fields
@@ -205,8 +220,10 @@ class TestWritablePayload:
                datetimes use the format the API documents
         """
         hosting = Hosting.model_validate(
-            hosting_payload_factory(tripsy_unique_identifier="XQQn4gUzYnh4")
-        ).with_source(tripit_segment_id="abc-123")
+            hosting_payload_factory(
+                tripsy_unique_identifier=faker.pystr(min_chars=12)
+            )
+        ).with_source(tripit_segment_id=str(faker.uuid4()))
 
         payload = hosting.writable_payload()
 

@@ -293,18 +293,26 @@ class TestArchiveWrites:
     def test_undocumented_and_source_fields_survive_the_archive(
         self,
         archive: Archive,
+        faker: Faker,
         hosting_payload_factory: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: a hosting carrying undocumented and source-only fields
         WHEN:  it is written and read back
         THEN:  both are still there and still distinguishable
+
+        The values are generated and named once, so what goes in is what
+        is looked for afterwards.  A literal repeated in both halves can
+        agree with itself while the code drops the field entirely.
         """
+        unique_identifier = faker.pystr(min_chars=12, max_chars=12)
+        icon = faker.word()
+        segment_id = str(faker.uuid4())
         hosting = Hosting.model_validate(
             hosting_payload_factory(
-                tripsy_unique_identifier="XQQn4gUzYnh4", custom_icon="bed"
+                tripsy_unique_identifier=unique_identifier, custom_icon=icon
             )
-        ).with_source(tripit_segment_id="abc-123")
+        ).with_source(tripit_segment_id=segment_id)
 
         path = archive.write(hosting, trip_key="t")
         restored = archive.read(Hosting, path)
@@ -312,12 +320,15 @@ class TestArchiveWrites:
 
         check.equal(
             restored.wire_extras,
-            {"tripsy_unique_identifier": "XQQn4gUzYnh4", "custom_icon": "bed"},
+            {
+                "tripsy_unique_identifier": unique_identifier,
+                "custom_icon": icon,
+            },
             "undocumented Tripsy fields",
         )
         check.equal(
             restored.source_extras,
-            {"tripit_segment_id": "abc-123"},
+            {"tripit_segment_id": segment_id},
             "source-only fields",
         )
 
