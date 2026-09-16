@@ -9,6 +9,7 @@ real 1Password would need a real vault and would write to it.
 """
 
 # system imports
+import re
 import subprocess
 from collections.abc import MutableMapping
 from typing import Any
@@ -154,56 +155,60 @@ class TestOnePasswordStore:
 
     ####################################################################
     #
-    def test_a_missing_field_is_not_an_error(
-        self, mocker: MockerFixture
-    ) -> None:
-        """
-        GIVEN: an item carrying no such field
-        WHEN:  the field is read
-        THEN:  None comes back rather than an exception
-
-        A token that has never been cached is exactly this case, and it
-        is the ordinary state of a fresh item.
-        """
-        mocker.patch(
-            "tripsy_exim.secrets.subprocess.run",
-            return_value=completed(
-                returncode=1,
-                stderr=(
-                    "[ERROR] could not read secret "
-                    "'op://Personal/Tripsy/token': item 'Personal/Tripsy' "
-                    "does not have a field 'token'"
-                ),
+    @pytest.mark.parametrize(
+        "complaint,missing",
+        [
+            pytest.param(
+                "[ERROR] could not read secret "
+                "'op://Personal/Tripsy/token': item 'Personal/Tripsy' "
+                "does not have a field 'token'",
+                True,
+                id="op-2.32-wording",
             ),
-        )
-        store = OnePasswordStore("op://Personal/Tripsy")
-
-        assert store.get(TOKEN) is None
-
-    ####################################################################
-    #
-    def test_a_store_that_cannot_be_reached_says_so(
-        self, mocker: MockerFixture
+            pytest.param(
+                '"token" isn\'t a field in the item',
+                True,
+                id="older-wording",
+            ),
+            pytest.param(
+                "No accounts configured for use with 1Password CLI.",
+                False,
+                id="unauthorised-binary",
+            ),
+            pytest.param(
+                "could not connect to 1Password desktop app",
+                False,
+                id="app-not-running",
+            ),
+        ],
+    )
+    def test_only_an_absent_field_reads_as_absent(
+        self, mocker: MockerFixture, complaint: str, missing: bool
     ) -> None:
         """
-        GIVEN: op refusing for a reason that is not a missing field
+        GIVEN: op refusing with a particular complaint
         WHEN:  a field is read
-        THEN:  SecretError carries op's own words
+        THEN:  an absent field comes back as None, and anything else
+               raises carrying op's own words
 
-        The failure that actually happens is an unauthorised binary, and
-        a generic message would send someone hunting the wrong problem.
+        A token that has never been cached is an absent field, and it is
+        the ordinary state of a fresh item.  Matching too widely would
+        swallow a broken store as an empty field and report a missing
+        credential rather than the real fault -- which is what an
+        unauthorised binary looks like, and a generic message would send
+        someone hunting the wrong problem.
         """
         mocker.patch(
             "tripsy_exim.secrets.subprocess.run",
-            return_value=completed(
-                returncode=1,
-                stderr="No accounts configured for use with 1Password CLI.",
-            ),
+            return_value=completed(returncode=1, stderr=complaint),
         )
         store = OnePasswordStore("op://Personal/Tripsy")
 
-        with pytest.raises(SecretError, match="No accounts configured"):
-            store.get(USERNAME)
+        if missing:
+            assert store.get(TOKEN) is None
+        else:
+            with pytest.raises(SecretError, match=re.escape(complaint)):
+                store.get(TOKEN)
 
     ####################################################################
     #
@@ -320,57 +325,6 @@ class TestProtocol:
         store: Any = OnePasswordStore("op://Personal/Tripsy")
 
         assert hasattr(store, member)
-
-    ####################################################################
-    #
-    @pytest.mark.parametrize(
-        "complaint,missing",
-        [
-            pytest.param(
-                "item 'Personal/Tripsy' does not have a field 'token'",
-                True,
-                id="op-2.32-wording",
-            ),
-            pytest.param(
-                '"token" isn\'t a field in the item',
-                True,
-                id="older-wording",
-            ),
-            pytest.param(
-                "No accounts configured for use with 1Password CLI.",
-                False,
-                id="unauthorised-binary",
-            ),
-            pytest.param(
-                "could not connect to 1Password desktop app",
-                False,
-                id="app-not-running",
-            ),
-        ],
-    )
-    def test_only_an_absent_field_reads_as_absent(
-        self, mocker: MockerFixture, complaint: str, missing: bool
-    ) -> None:
-        """
-        GIVEN: op refusing with a particular complaint
-        WHEN:  a field is read
-        THEN:  only an absent field comes back as None
-
-        Matching too widely would swallow a broken store as an empty
-        field and report a missing credential rather than the real fault
-        -- which is what an unauthorised binary looks like.
-        """
-        mocker.patch(
-            "tripsy_exim.secrets.subprocess.run",
-            return_value=completed(returncode=1, stderr=complaint),
-        )
-        store = OnePasswordStore("op://Personal/Tripsy")
-
-        if missing:
-            assert store.get(TOKEN) is None
-        else:
-            with pytest.raises(SecretError):
-                store.get(TOKEN)
 
     ####################################################################
     #

@@ -79,35 +79,30 @@ class TestStage:
 
     ####################################################################
     #
-    def test_trip_is_written(self, tmp_path: Path, faker: Faker) -> None:
-        """
-        GIVEN: a parsed calendar
-        WHEN:  it is staged
-        THEN:  the trip lands at trip.json under its own key
-        """
-        archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, items=3))
-
-        staged = stage(archive, parsed)
-
-        check.is_true(staged.trip_path.exists())
-        check.equal(staged.trip_path.name, "trip.json")
-        check.equal(staged.trip_path.parent.name, staged.trip_key)
-
-    ####################################################################
-    #
-    def test_children_share_the_trip_key(
+    def test_one_calendar_lands_as_one_trip(
         self, tmp_path: Path, faker: Faker
     ) -> None:
         """
-        GIVEN: a calendar with a mix of event kinds
+        GIVEN: a parsed calendar of mixed event kinds
         WHEN:  it is staged
-        THEN:  every object sits under the one trip directory
+        THEN:  the trip and every child sit under one key, counted
+
+        The trip key is derived once and reused, so what is checked here
+        is the whole of one staging run: where the trip file lands, that
+        nothing escaped its directory, and that the total counts the
+        children and not the trip.
         """
         archive = Archive(tmp_path)
         parsed = parse(calendar_text(faker, items=6, lodging=2, flights=2))
 
         staged = stage(archive, parsed)
+
+        trip_dir = archive.trip_dir(staged.trip_key)
+        check.is_true(staged.trip_path.exists())
+        check.equal(staged.trip_path.name, "trip.json")
+        check.equal(staged.trip_path.parent.name, staged.trip_key)
+        check.equal(staged.total, 6, "the children, the trip not counted")
+        check.equal(len(archive.trip_keys()), 1)
 
         # The manifest belongs at the archive root rather than inside a
         # trip, so it is not one of the files under test here.
@@ -115,30 +110,11 @@ class TestStage:
         written = [
             p for p in tmp_path.rglob("*.json") if p != archive.manifest_path
         ]
-        trip_dir = archive.trip_dir(staged.trip_key)
-        check.equal(len(archive.trip_keys()), 1)
         for path in written:
             check.is_true(
                 trip_dir in path.parents or path.parent == trip_dir,
                 f"{path} escaped {trip_dir}",
             )
-
-    ####################################################################
-    #
-    def test_total_counts_the_children(
-        self, tmp_path: Path, faker: Faker
-    ) -> None:
-        """
-        GIVEN: a calendar of six item events
-        WHEN:  it is staged
-        THEN:  the reported total is six, the trip not counted
-        """
-        archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, items=6, lodging=2, flights=1))
-
-        staged = stage(archive, parsed)
-
-        check.equal(staged.total, 6)
 
     ####################################################################
     #
@@ -284,29 +260,6 @@ class TestStageExport:
             # The trip's own file, plus one per child.
             #
             check.equal(written, one.total + 1)
-
-    ####################################################################
-    #
-    def test_staging_twice_does_not_duplicate(
-        self, tmp_path: Path, faker: Faker
-    ) -> None:
-        """
-        GIVEN: an export staged once
-        WHEN:  it is staged again
-        THEN:  the same keys come back and nothing new is written
-
-        Identity is derived from content, so a re-run has to land on the
-        same objects rather than a second copy of them.
-        """
-        archive = Archive(tmp_path)
-        document = tripit_builder.random_export(faker, trips=2)
-
-        first = stage_export(archive, document)
-        before = sorted(p.name for p in tmp_path.rglob("*.json"))
-        second = stage_export(archive, document)
-
-        assert [s.trip_key for s in first] == [s.trip_key for s in second]
-        assert sorted(p.name for p in tmp_path.rglob("*.json")) == before
 
     ####################################################################
     #
@@ -554,27 +507,29 @@ class TestRestaging:
         """
         GIVEN: a staged trip
         WHEN:  the same source is staged again
-        THEN:  the same files are there, none rewritten
+        THEN:  the archive holds the same files, none of them rewritten
 
         Objects are derived from their source, so an unchanged export
         reproduces every byte; rewriting would churn a synced archive.
+        Every trip directory is compared, so a re-run that minted a
+        second key for one trip shows up as a file that was not there.
         """
         document = tripit_builder.export(
             tripit_builder.trip(
                 objects=[tripit_builder.flight(), tripit_builder.lodging()]
             )
         )
-        staged = stage_export(archive, document)[0]
+        stage_export(archive, document)
         before = {
             path: path.stat().st_mtime_ns
-            for path in archive.trip_dir(staged.trip_key).rglob("*.json")
+            for path in (archive.root / "trips").rglob("*.json")
         }
 
         stage_export(archive, document)
 
         after = {
             path: path.stat().st_mtime_ns
-            for path in archive.trip_dir(staged.trip_key).rglob("*.json")
+            for path in (archive.root / "trips").rglob("*.json")
         }
         check.equal(set(after), set(before), "the same files")
         check.equal(after, before, "none of them rewritten")

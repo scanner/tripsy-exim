@@ -156,6 +156,24 @@ class TestPlan:
 
     ####################################################################
     #
+    def test_a_flight_is_labelled_by_its_ends_in_the_plan(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a flight, which carries no name
+        WHEN:  the trip is planned
+        THEN:  the plan calls it by its endpoints
+
+        Which is what the app will call it, and a blank row tells a
+        reader nothing before the one irreversible step.
+        """
+        stage_export(archive, b.export(b.trip(objects=[b.flight()])))
+        plan = plan_trip(archive, archive.trip_keys()[0])
+
+        check.equal(plan.objects[0].name, "SAN to OSA")
+
+    ####################################################################
+    #
     def test_untyped_transportations_are_surfaced(
         self, archive: Archive
     ) -> None:
@@ -491,24 +509,6 @@ class TestMerge:
 
     ####################################################################
     #
-    def test_a_flight_is_labelled_by_its_ends_in_the_plan(
-        self, archive: Archive
-    ) -> None:
-        """
-        GIVEN: a flight, which carries no name
-        WHEN:  the trip is planned
-        THEN:  the plan calls it by its endpoints
-
-        Which is what the app will call it, and a blank row tells a
-        reader nothing before the one irreversible step.
-        """
-        stage_export(archive, b.export(b.trip(objects=[b.flight()])))
-        plan = plan_trip(archive, archive.trip_keys()[0])
-
-        check.equal(plan.objects[0].name, "SAN to OSA")
-
-    ####################################################################
-    #
     def test_an_object_the_target_already_has_is_not_sent_twice(
         self, archive: Archive
     ) -> None:
@@ -795,8 +795,6 @@ class TestAdditions:
         check.equal(plan.objects[0].name, "the shuttle")
         check.equal(plan.objects[0].sort_order, 1)
 
-    ####################################################################
-    #
     ####################################################################
     #
     def test_an_addition_is_minted_into_the_trip_s_namespace(

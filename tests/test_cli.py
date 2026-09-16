@@ -433,49 +433,35 @@ class TestListCommand:
 
     ####################################################################
     #
-    def test_trips_are_listed_oldest_first_with_their_state(
+    def test_what_is_listed_and_what_pending_hides(
         self, runner: CliRunner, staged: Callable[..., Path]
     ) -> None:
         """
-        GIVEN: an archive of two trips, one already uploaded
-        WHEN:  list is run
-        THEN:  both appear oldest first, and the finished one is marked
+        GIVEN: an archive of two trips, the older already uploaded
+        WHEN:  list is run plainly and again with --pending
+        THEN:  the plain run shows both oldest first and marks the
+               finished one, and --pending shows only what is left
         """
         archive_root = staged(*dated_pair())
         archive = Archive(archive_root)
         mark_uploaded(archive, in_travel_order(archive, archive.trip_keys())[0])
 
-        result = runner.invoke(main, ["list", "--archive", str(archive_root)])
-
-        check.equal(result.exit_code, 0, result.output)
-        check.less(
-            result.output.index(EARLIER),
-            result.output.index(LATER),
-            "oldest first",
-        )
-        check.is_in("1 already uploaded", result.output)
-
-    ####################################################################
-    #
-    def test_pending_hides_what_is_done(
-        self, runner: CliRunner, staged: Callable[..., Path]
-    ) -> None:
-        """
-        GIVEN: an archive whose oldest trip is uploaded
-        WHEN:  list is run with --pending
-        THEN:  only the trip still to do is shown
-        """
-        archive_root = staged(*dated_pair())
-        archive = Archive(archive_root)
-        mark_uploaded(archive, in_travel_order(archive, archive.trip_keys())[0])
-
-        result = runner.invoke(
+        listed = runner.invoke(main, ["list", "--archive", str(archive_root)])
+        pending = runner.invoke(
             main, ["list", "--archive", str(archive_root), "--pending"]
         )
 
-        check.equal(result.exit_code, 0, result.output)
-        check.is_in(LATER, result.output)
-        check.is_not_in(EARLIER, result.output)
+        check.equal(listed.exit_code, 0, listed.output)
+        check.less(
+            listed.output.index(EARLIER),
+            listed.output.index(LATER),
+            "oldest first",
+        )
+        check.is_in("1 already uploaded", listed.output)
+
+        check.equal(pending.exit_code, 0, pending.output)
+        check.is_in(LATER, pending.output)
+        check.is_not_in(EARLIER, pending.output)
 
 
 ########################################################################

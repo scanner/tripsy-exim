@@ -131,50 +131,43 @@ class TestGeneration:
 
     ####################################################################
     #
-    def test_the_format_carries_a_generation(self) -> None:
-        """
-        GIVEN: a freshly minted identifier
-        WHEN:  its shape is read
-        THEN:  the generation sits between namespace and digest
-
-        Asserted literally, because the segment cannot be added later:
-        doing so would re-key everything already imported.
-        """
-        assert mint("ics", "uid-1").startswith(f"{IDENTIFIER_PREFIX}-ics-g01-")
-
-    ####################################################################
-    #
     @pytest.mark.parametrize(
-        "namespace",
-        ["ics", "tripit-json", "scratch-01", "scratch-g09"],
-        ids=["plain", "hyphenated", "digit-token", "generation-like-token"],
+        "namespace,generation",
+        [
+            pytest.param("ics", FIRST_GENERATION, id="plain"),
+            pytest.param("tripit-json", FIRST_GENERATION, id="hyphenated"),
+            pytest.param("scratch-01", FIRST_GENERATION, id="digit-token"),
+            pytest.param(
+                "scratch-g09", FIRST_GENERATION, id="generation-like-token"
+            ),
+            pytest.param(scratch_namespace("01"), 2, id="a-scratch-run"),
+            pytest.param("ics", 9, id="the-last-single-digit"),
+            pytest.param("ics", 10, id="two-digits"),
+            pytest.param("ics", 42, id="well-past-the-boundary"),
+        ],
     )
-    def test_the_generation_reads_back_whatever_the_namespace(
-        self, namespace: str
+    def test_the_generation_sits_between_namespace_and_digest(
+        self, namespace: str, generation: int
     ) -> None:
         """
-        GIVEN: a namespace that could be confused for a generation
-        WHEN:  the generation is read back
-        THEN:  it is the real one
+        GIVEN: a namespace, some of which could be read as a generation
+        WHEN:  an identifier is minted and its generation read back
+        THEN:  the segment is where it belongs and says what it should
 
-        A bare number would be ambiguous here -- it is valid hex and a
-        legal scratch run token alike -- which is why the segment is
-        letter-tagged.
+        The shape is asserted literally because the segment cannot be
+        added later: doing so would re-key everything already imported.
+        A bare number would be ambiguous -- it is valid hex and a legal
+        scratch run token alike -- which is why it is letter-tagged.
         """
-        assert generation_of(mint(namespace, "uid-1")) == FIRST_GENERATION
+        identifier = mint(namespace, "uid-1", generation=generation)
 
-    ####################################################################
-    #
-    @pytest.mark.parametrize("generation", [1, 2, 9, 10, 42])
-    def test_a_generation_survives_a_round_trip(self, generation: int) -> None:
-        """
-        GIVEN: an identifier minted at some generation
-        WHEN:  it is read back
-        THEN:  the same number comes out, past the two-digit boundary
-        """
-        identifier = mint("ics", "uid-1", generation=generation)
-
-        assert generation_of(identifier) == generation
+        check.is_true(
+            identifier.startswith(
+                f"{IDENTIFIER_PREFIX}-{namespace}-g{generation:02d}-"
+            ),
+            identifier,
+        )
+        check.equal(generation_of(identifier), generation)
 
     ####################################################################
     #

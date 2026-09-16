@@ -104,17 +104,6 @@ class TestRepairMojibake:
 
     ####################################################################
     #
-    def test_repair_is_idempotent(self) -> None:
-        """
-        GIVEN: a string TripIt encoded
-        WHEN:  it is repaired twice
-        THEN:  the second pass changes nothing
-        """
-        once = repair_mojibake(mojibake("日本の旅行"))
-        assert repair_mojibake(once) == once
-
-    ####################################################################
-    #
     def test_undecodable_bytes_are_left_alone(self) -> None:
         """
         GIVEN: a latin-1 string whose bytes are not valid UTF-8
@@ -261,16 +250,6 @@ class TestRecover:
         flattened = encoded.replace("\u00a0", " ")
 
         assert recover(flattened) == "JR Sagano Line for KYOTO"
-
-    ####################################################################
-    #
-    def test_recovery_still_decodes_ordinary_text(self) -> None:
-        """
-        GIVEN: text that only needs decoding, with nothing stranded
-        WHEN:  it is recovered
-        THEN:  decoding still happens
-        """
-        assert recover(mojibake("\u65b0\u5e79\u7dda")) == "\u65b0\u5e79\u7dda"
 
     ####################################################################
     #

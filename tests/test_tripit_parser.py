@@ -503,21 +503,24 @@ class TestParsing:
     ####################################################################
     #
     @pytest.mark.parametrize(
-        "document,trips",
+        "document",
         [
-            ({"Trips": []}, 0),
-            ({"Trips": [], "screen_name": "example"}, 0),
+            pytest.param({"Trips": []}, id="the-key-alone"),
+            pytest.param(
+                {"Trips": [], "screen_name": "example"}, id="an-account"
+            ),
+            pytest.param(b.export(), id="as-the-builder-writes-one"),
         ],
     )
     def test_an_account_with_no_trips_parses_to_nothing(
-        self, document: dict[str, Any], trips: int
+        self, document: dict[str, Any]
     ) -> None:
         """
         GIVEN: an export whose `Trips` list is empty
         WHEN:  it is parsed
-        THEN:  no trips come out, and nothing is raised
+        THEN:  an empty list comes back rather than an exception
         """
-        assert len(parse_export(document)) == trips
+        assert parse_export(document) == []
 
     ####################################################################
     #
@@ -669,16 +672,6 @@ class TestParsing:
 
         summaries = {n.summary for n in parsed.unclassified}
         assert summaries == {"Example Garden", "Directions from A to B"}
-
-    ####################################################################
-    #
-    def test_an_empty_export_parses_to_nothing(self) -> None:
-        """
-        GIVEN: an export carrying no trips
-        WHEN:  it is parsed
-        THEN:  an empty list comes back rather than an exception
-        """
-        assert parse_export(b.export()) == []
 
 
 ########################################################################

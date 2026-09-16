@@ -113,6 +113,11 @@ class TestMatching:
         check.equal(entry.fields["longitude"], TOKYO[1])
         check.equal(len(result.matched), 1)
         check.is_true(result.matched[0].named, "names agreed too")
+        check.equal(
+            result.divergences,
+            [],
+            "one side placing nothing is nothing to differ over",
+        )
 
     ####################################################################
     #
@@ -402,14 +407,32 @@ class TestConflicts:
 
     ####################################################################
     #
-    def test_two_events_disagreeing_leave_the_field_alone(self) -> None:
+    @pytest.mark.parametrize(
+        "checkout,conflicts,applied",
+        [
+            pytest.param(KYOTO, 2, {}, id="disagreeing"),
+            pytest.param(
+                TOKYO,
+                0,
+                {"latitude": TOKYO[0], "longitude": TOKYO[1]},
+                id="agreeing",
+            ),
+        ],
+    )
+    def test_two_events_are_applied_only_where_they_agree(
+        self,
+        checkout: tuple[float, float],
+        conflicts: int,
+        applied: dict[str, float],
+    ) -> None:
         """
         GIVEN: an export stay whose start and end both match an event
-        WHEN:  the two events carry different coordinates
-        THEN:  neither is applied, and the disagreement is reported
+        WHEN:  the two events carry the same coordinates, or different
+        THEN:  a value is applied only when they agree
 
-        A hotel is in one place, so this means a match is wrong.
-        Applying whichever came last would bury that.
+        A hotel is in one place, so disagreement means a match is wrong
+        and applying whichever came last would bury that.  Agreement is
+        the ordinary case and must cost nothing.
         """
         target = trip_of(
             Hosting(name="Hotel", starts_at=at(15), ends_at=at(10, day=3))
@@ -424,54 +447,18 @@ class TestConflicts:
             Hosting(
                 name="Check-out",
                 starts_at=at(10, day=3),
-                latitude=KYOTO[0],
-                longitude=KYOTO[1],
+                latitude=checkout[0],
+                longitude=checkout[1],
             ),
         )
 
         result = enrich(target, source)
 
-        check.equal(len(result.conflicts), 2, "latitude and longitude")
-        check.equal(
-            result.overrides.entries,
-            {},
-            "and no correction is left behind to report",
-        )
-
-    ####################################################################
-    #
-    def test_two_events_agreeing_are_no_conflict(self) -> None:
-        """
-        GIVEN: check-in and check-out carrying the same coordinates
-        WHEN:  both match the one stay
-        THEN:  the value is applied once and nothing is reported
-
-        This is the ordinary case: a hotel is in the same place at both
-        ends of a stay.
-        """
-        target = trip_of(
-            Hosting(name="Hotel", starts_at=at(15), ends_at=at(10, day=3))
-        )
-        source = trip_of(
-            Hosting(
-                name="Check-in",
-                starts_at=at(15),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            ),
-            Hosting(
-                name="Check-out",
-                starts_at=at(10, day=3),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            ),
-        )
-
-        result = enrich(target, source)
-
-        check.equal(result.conflicts, [])
-        entry = next(iter(result.overrides.entries.values()))
-        check.equal(entry.fields["latitude"], TOKYO[0])
+        fields: dict[str, float] = {}
+        for entry in result.overrides.entries.values():
+            fields.update(entry.fields)
+        check.equal(len(result.conflicts), conflicts, "latitude and longitude")
+        check.equal(fields, applied)
 
 
 ########################################################################
@@ -553,33 +540,6 @@ class TestDivergence:
         check.equal(len(result.divergences), 1, "reported")
         check.is_in("km apart", result.divergences[0])
         check.equal(result.overrides.entries, {}, "and nothing overwritten")
-
-    ####################################################################
-    #
-    def test_nothing_is_reported_when_only_one_side_has_a_place(
-        self,
-    ) -> None:
-        """
-        GIVEN: an export object with no coordinates
-        WHEN:  a calendar event supplies some
-        THEN:  no divergence is reported, since there is nothing to differ
-
-        This is the ordinary enrichment case and must stay quiet.
-        """
-        target = trip_of(Activity(name="Garden", starts_at=at(10)))
-        source = trip_of(
-            Activity(
-                name="Garden",
-                starts_at=at(10),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
-        )
-
-        result = enrich(target, source)
-
-        check.equal(result.divergences, [])
-        check.is_true(result.overrides.entries, "and it was filled")
 
     ####################################################################
     #
