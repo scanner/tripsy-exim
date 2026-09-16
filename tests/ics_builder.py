@@ -10,9 +10,9 @@ never committed.
 The shape is copied from a structural survey of a real export
 (probe_scripts/probe_ics.py); the content is invented here.  Two fields
 differ from the real thing on purpose -- PRODID and the UID domain -- so
-that a real calendar can never pass as a generated one.  That is what the
-guard test in test_no_personal_data.py checks, and it is why the parser
-must key off the UUID rather than either of those.
+that a real calendar can never pass as a generated one.  A pre-commit
+hook holds every fixture to both, and it is why the parser must key off
+the UUID rather than either of those.
 
 What the real export actually contains, and therefore what the knobs
 reproduce:

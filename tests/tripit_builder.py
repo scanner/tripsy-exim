@@ -42,8 +42,8 @@ _UNDEFINED = {0x81, 0x8D, 0x8F, 0x90, 0x9D}
 # untested.  The real export is full of them.
 #
 # Stamped into every generated export.  A real GDPR export cannot carry
-# it, which is what lets the guard test tell a generated fixture from a
-# real one -- the same job SYNTHETIC_PRODID does for .ics.
+# it, which is what lets the pre-commit hook tell a generated fixture
+# from a real one -- the same job SYNTHETIC_PRODID does for .ics.
 #
 SYNTHETIC_MARKER = "x_synthetic"
 SYNTHETIC_MARKER_VALUE = "tripsy-exim generated export"

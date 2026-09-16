@@ -28,6 +28,13 @@ steps:
       - uv run ruff check .
       - uv run ruff format --check .
       - uv run mypy .
+      # The fixture guards, which a commit made with --no-verify would
+      # otherwise walk past.  Named one at a time so this step does not
+      # build environments for the ruff and mypy hooks it has just run.
+      #
+      - uv run pre-commit run --all-files fixtures-are-not-a-real-export
+      - uv run pre-commit run --all-files calendars-carry-the-synthetic-prodid
+      - uv run pre-commit run --all-files exports-carry-the-synthetic-marker
 
   - name: test
     image: "python:3.14.7"

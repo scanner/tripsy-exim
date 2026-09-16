@@ -209,6 +209,18 @@ the test suite, and nothing in a fixture should be traceable to a real
 trip. Use a real `.ics` locally to check parsing if you need to, but do not
 commit it.
 
+`.gitignore` blocks `*.ics` and `*.json` and re-allows both under
+`tests/fixtures/`, which makes anything committed there the one way a
+real itinerary could reach a public repository. Three pre-commit hooks
+stand over that path: a fixture must carry the generator's own `PRODID`
+or export marker, and must not name TripIt anywhere. They run at commit
+time, because a check that runs later reports a disclosure rather than
+preventing one.
+
+No fixture is committed today -- every calendar and export the suite
+uses is generated at run time -- so the hooks are guarding against a
+file somebody adds later.
+
 ## Reference
 
 - [Tripsy public API documentation](https://docs.api.tripsy.app/)

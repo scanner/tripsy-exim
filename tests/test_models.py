@@ -26,6 +26,16 @@ from tripsy_exim.models import (
     Trip,
 )
 
+# Reserved by RFC 2606 and RFC 6761, so no address built from one can
+# ever reach a real inbox.
+#
+RESERVED_EMAIL_DOMAINS = (
+    "example.com",
+    "example.org",
+    "example.net",
+    "example.invalid",
+)
+
 
 ########################################################################
 ########################################################################
@@ -407,3 +417,12 @@ class TestFieldTypes:
         check.equal(owner.name, "Example Person", "child owner detail")
         check.is_false(permissions.is_owner, "nested permission")
         check.is_true(permissions.can_edit, "nested permission")
+
+        # The factory draws from faker's safe provider, so a generated
+        # collaborator names a documentation domain rather than somewhere
+        # a message could actually arrive.
+        #
+        check.is_true(
+            str(collaborator.email).endswith(RESERVED_EMAIL_DOMAINS),
+            str(collaborator.email),
+        )
