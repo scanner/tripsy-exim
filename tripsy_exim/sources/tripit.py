@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 """
-Reading TripIt's GDPR JSON export into canonical trips.
+Reading TripIt's JSON export into canonical trips.
 
 The export is one document holding every trip on an account, so this
 yields a list where the `.ics` parser yields one calendar.  Otherwise it

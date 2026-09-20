@@ -9,7 +9,7 @@ canonical objects on disk -- and can be reviewed and corrected -- before
 Tripsy is told anything about it.
 
 Two sources reach it.  A `.ics` file is one trip, so `stage_file` returns
-one result; a TripIt GDPR export is a whole account, so `stage_export`
+one result; a TripIt JSON export is a whole account, so `stage_export`
 returns one per trip.  Both land in the same archive under the same keys,
 and nothing downstream needs to know which produced a trip.
 
@@ -66,7 +66,7 @@ class TripAlreadyArchived(Exception):
     """
     Raised rather than staging a calendar for a trip already held.
 
-    The GDPR export is the authority for identity.  A calendar keys onto
+    The JSON export is the authority for identity.  A calendar keys onto
     the same real trip but mints a different identifier for it, so
     staging both would put two trips into Tripsy -- and Tripsy never
     releases an identifier, so that pair could be neither merged nor
@@ -292,7 +292,7 @@ def stage_export(
     namespace: str | None = None,
 ) -> list[StagedTrip]:
     """
-    Stage every trip in a TripIt GDPR export.
+    Stage every trip in a TripIt JSON export.
 
     An export holds a whole account, so this returns one `StagedTrip` per
     trip where `stage_file` returns one per calendar.  Each is written
@@ -324,7 +324,7 @@ def stage_export_file(
     archive: Archive, path: Path, namespace: str | None = None
 ) -> list[StagedTrip]:
     """
-    Read one TripIt GDPR export and stage every trip in it.
+    Read one TripIt JSON export and stage every trip in it.
 
     Args:
         archive: The archive to write into.

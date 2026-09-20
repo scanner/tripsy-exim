@@ -3,7 +3,7 @@
 """
 Checking an export trip against the calendar for the same trip.
 
-The GDPR export owns a trip's identity, so a calendar for a trip the
+The JSON export owns a trip's identity, so a calendar for a trip the
 archive already holds is refused rather than staged.  This is what the
 calendar is good for instead.
 

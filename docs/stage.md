@@ -7,6 +7,12 @@ tripsy-exim stage [--archive DIRECTORY] [--namespace TEXT] [--scratch]
                   SOURCES...
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 Reads one or more TripIt `.ics` calendars and writes canonical trips into
@@ -57,7 +63,7 @@ Writes `<archive>/trips/<trip key>/` and updates
 Stage one calendar, then read what the parser could not classify:
 
 ```sh
-tripsy-exim stage ~/Downloads/tripit/Lakeside-2012.ics
+uv run tripsy-exim stage ~/Downloads/tripit/Lakeside-2012.ics
 jq '.unclassified[] | {summary, reason}' \
    "$TRIPSY_EXIM_ARCHIVE"/trips/txim-ics-g01-*/report.json
 ```
@@ -66,8 +72,8 @@ Stage a shelf of calendars into a throwaway namespace first, to see what
 an upload would look like without spending identifiers:
 
 ```sh
-tripsy-exim stage --scratch ~/Downloads/tripit/*.ics
-tripsy-exim upload --dry-run --verbose
+uv run tripsy-exim stage --scratch ~/Downloads/tripit/*.ics
+uv run tripsy-exim upload --dry-run --verbose
 ```
 
 ## SEE ALSO

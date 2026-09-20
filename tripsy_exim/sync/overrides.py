@@ -47,7 +47,7 @@ MODEL_FOR_COLLECTION: dict[str, type[CanonicalModel]] = {
 # and where that place is has been measured: TripIt's calendars put the
 # destination there.  The parser files a transport event the same way, so
 # a retyped activity and a directly parsed leg end up alike rather than
-# a field apart.  A GDPR export offers no evidence either way, and one
+# a field apart.  A JSON export offers no evidence either way, and one
 # consistent rule beats two.
 #
 _SPLIT_FIELDS: dict[str, str] = {

@@ -1,4 +1,4 @@
-# stage-export(1) -- parse a TripIt GDPR export into the archive
+# stage-export(1) -- parse a TripIt JSON export into the archive
 
 ## SYNOPSIS
 
@@ -7,10 +7,16 @@ tripsy-exim stage-export [--archive DIRECTORY] [--namespace TEXT]
                          [--scratch] EXPORT
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
-Reads a TripIt GDPR export -- the JSON file TripIt sends when you ask for
-your data -- and stages every trip in it in one pass. Nothing is sent to
+Reads a TripIt JSON export -- the file TripIt sends when you ask for your
+account data -- and stages every trip in it in one pass. Nothing is sent to
 Tripsy, and no credentials are needed.
 
 One export carries a whole account, so this is the way in for the bulk of
@@ -29,6 +35,14 @@ The reader takes the export's own account of times and text: it reads a
 record's clock in the timezone the record names, falls back to the
 paired instant's zone when a record names none, and strips the markup
 TripIt leaves in its notes.
+
+### Getting an export
+
+TripIt does not offer one from the app. Email `support@tripit.com` from the
+address you sign in with, asking for a "GDPR Request - complete JSON export
+of my personal account data". Invoking GDPR is what gets it delivered
+within a defined time; what arrives is ordinary JSON with nothing
+GDPR-specific in it.
 
 ## OPTIONS
 
@@ -57,8 +71,8 @@ updates `<archive>/manifest.json`.
 Stage a whole account:
 
 ```sh
-tripsy-exim stage-export ~/Downloads/tripit-export/export.json
-tripsy-exim list
+uv run tripsy-exim stage-export ~/Downloads/tripit-export/export.json
+uv run tripsy-exim list
 ```
 
 ## NOTES

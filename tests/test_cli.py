@@ -40,7 +40,7 @@ def runner() -> CliRunner:
 ####################################################################
 #
 def write_export(tmp_path: Path, *trips: dict) -> Path:
-    """One synthetic GDPR export on disk."""
+    """One synthetic JSON export on disk."""
     path = tmp_path / "export.json"
     path.write_text(json.dumps(b.export(*trips)))
     return path

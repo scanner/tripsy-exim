@@ -3,7 +3,7 @@
 """
 Recognising one real trip across the two sources.
 
-A trip can reach the archive from a GDPR export and from a `.ics`
+A trip can reach the archive from a JSON export and from a `.ics`
 calendar, and the two mint different identifiers for it: the export
 carries no record ids, so its identity comes from content, while a
 calendar keys on the `VEVENT` `UID`.  Importing one trip by both routes

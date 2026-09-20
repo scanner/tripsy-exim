@@ -7,8 +7,8 @@ The parser is developed against these rather than against the real export
 kept outside the repository, which is reference material only and
 never committed.
 
-The shape is copied from a structural survey of a real export
-(probe_scripts/probe_ics.py); the content is invented here.  Two fields
+The shape is copied from a structural survey of a real export; the
+content is invented here.  Two fields
 differ from the real thing on purpose -- PRODID and the UID domain -- so
 that a real calendar can never pass as a generated one.  A pre-commit
 hook holds every fixture to both, and it is why the parser must key off
@@ -89,7 +89,7 @@ def synthetic_uid(*, item: bool = True) -> str:
 
     Trip-level events carry a bare UUID; item events prefix it with
     `item-`.  Both matter: the parser is expected to mint identifiers from
-    the UUID alone, so that an import from the GDPR JSON later produces
+    the UUID alone, so that an import from the JSON export later produces
     the same key and corrects these objects rather than duplicating them.
 
     Args:

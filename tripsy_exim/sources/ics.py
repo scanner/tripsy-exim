@@ -58,7 +58,7 @@ from tripsy_exim.sources.join import key_from_calendar
 from tripsy_exim.sources.timezones import zone_for
 
 # Names the key an identifier is minted from, not the file it arrived in.
-# The same TripIt uuid could reach us by another route -- the GDPR JSON
+# The same TripIt uuid could reach us by another route -- the TripIt JSON
 # export most obviously -- and an import that keys on it must mint the
 # same identifier in order to correct these objects rather than duplicate
 # them.  Changing this after the first import orphans everything already
@@ -424,7 +424,7 @@ def _build(
             source["x_all_day"] = "TRUE"
 
         # A VEVENT carries one LOCATION and one GEO, and TripIt puts the
-        # *destination* there.  Measured against the GDPR export: of 163
+        # *destination* there.  Measured against the JSON export: of 163
         # comparable flight events, every one sits nearer the arrival
         # airport than the departure, and none within 490km of the
         # departure.  The derived zone follows the same coordinates, so

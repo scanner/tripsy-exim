@@ -213,7 +213,7 @@ class TestStageFile:
 ########################################################################
 #
 class TestStageExport:
-    """Tests for staging a whole TripIt GDPR export."""
+    """Tests for staging a whole TripIt JSON export."""
 
     ####################################################################
     #

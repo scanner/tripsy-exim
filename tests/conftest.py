@@ -264,7 +264,7 @@ def ics_calendar(faker: Faker) -> Callable[..., str]:
 @pytest.fixture
 def tripit_export(faker: Faker) -> Callable[..., dict[str, Any]]:
     """
-    Build a synthetic TripIt GDPR export document.
+    Build a synthetic TripIt JSON export document.
 
     Takes the same keyword arguments as `tripit_builder.random_export`,
     so a test asks for the number of trips it wants.  Roughly a third of

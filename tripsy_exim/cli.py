@@ -149,8 +149,8 @@ def open_session(
 
     A store that can write caches the token beside the password, so a run
     that follows a successful one sends no credentials at all.  The token
-    has no stated lifetime -- these are DRF tokens, which are not
-    documented to expire -- so the only way to learn a cached one is spent
+    has no stated lifetime -- these appear to be Django REST Framework
+    tokens, which are not documented to expire -- so the only way to learn a cached one is spent
     is to be refused, and that refusal is what replaces it.
 
     Args:
@@ -394,7 +394,7 @@ def stage_export_command(
     scratch: bool,
 ) -> None:
     """
-    Parse a TripIt GDPR export into the local archive.
+    Parse a TripIt JSON export into the local archive.
 
     Nothing is sent to Tripsy.  One export carries a whole account, so
     every trip in it is staged in one pass, each with the reader's report

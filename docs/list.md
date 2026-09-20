@@ -6,6 +6,12 @@
 tripsy-exim list [--archive DIRECTORY] [--pending | --all]
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 Prints the staged trips oldest first, one per line, with the trip key
@@ -48,7 +54,7 @@ a preview of what `upload --limit N` will take next.
 What the next upload would take:
 
 ```sh
-tripsy-exim list --pending | head -10
+uv run tripsy-exim list --pending | head -10
 ```
 
 ## SEE ALSO

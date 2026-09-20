@@ -269,7 +269,7 @@ class TestClassification:
                empty
 
         TripIt puts the destination in those properties.  Measured
-        against the GDPR export, every one of 163 comparable flight
+        against the JSON export, every one of 163 comparable flight
         events sits nearer the arrival airport than the departure, none
         within 490km of the departure, and the zone derived from the same
         coordinates matched the arrival's in every case.  Filling the

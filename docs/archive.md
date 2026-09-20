@@ -43,9 +43,18 @@ First match wins:
       activities/<key>.json
       hostings/<key>.json
       transportations/<key>.json
+      expenses/<key>.json
+      collaborators/<key>.json
   overrides/
     <source uuid>.json           corrections, one file per trip
+  quarantine/
+    <key>.json                   payloads the models could not parse
 ```
+
+`expenses/` and `collaborators/` are written by a read back from Tripsy,
+not by staging: no source this project parses carries either, and the API
+offers no way to create a collaborator at all. A staged trip has neither
+directory until something has been read back into it.
 
 A *trip key* is the trip's `internal_identifier`, and it names both the
 directory and the trip. Object files are named by their own identifier.
@@ -74,6 +83,10 @@ To correct something, look its source uuid up in `index`, then write an
 override under that uuid.
 
 ## IDENTIFIERS
+
+See IDENTITY in [models(7)](models.md) for what `internal_identifier` is
+and which objects carry one. This section is about the values
+`tripsy-exim` mints into it.
 
 Tripsy treats `internal_identifier` as an idempotency key: POSTing an
 object whose identifier already exists returns an empty `200` rather than
@@ -160,6 +173,7 @@ re-run is a no-op, but it costs a full pass of requests.
 
 ## SEE ALSO
 
-[stage(1)](stage.md), [stage-export(1)](stage-export.md),
-[list(1)](list.md), [merge(1)](merge.md), [upload(1)](upload.md),
-[verify(1)](verify.md), [fix-locations(1)](fix-locations.md)
+[models(7)](models.md), [stage(1)](stage.md),
+[stage-export(1)](stage-export.md), [list(1)](list.md),
+[merge(1)](merge.md), [upload(1)](upload.md), [verify(1)](verify.md),
+[fix-locations(1)](fix-locations.md)

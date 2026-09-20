@@ -10,6 +10,12 @@ tripsy-exim fix-locations [--archive DIRECTORY] [--trip TEXT]...
                           [--username TEXT] [--password TEXT]
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 A clean-up run over trips already uploaded. It finds every object in
@@ -139,14 +145,14 @@ Look at a trip in the app first, so the app places what it can, then see
 what is left:
 
 ```sh
-tripsy-exim fix-locations --trip 'Lakeside'
-tripsy-exim fix-locations --trip 'Lakeside' --write
+uv run tripsy-exim fix-locations --trip 'Lakeside'
+uv run tripsy-exim fix-locations --trip 'Lakeside' --write
 ```
 
 A car-rental desk that resolved to the coffee shop at the same address:
 
 ```sh
-tripsy-exim fix-locations --trip 'Lakeside' \
+uv run tripsy-exim fix-locations --trip 'Lakeside' \
     --forget '1 Example Plaza, Springfield, IL 62701, United States' \
     --write
 ```
@@ -154,7 +160,7 @@ tripsy-exim fix-locations --trip 'Lakeside' \
 Use a different service for a run:
 
 ```sh
-tripsy-exim fix-locations --geocoder opencage --api-key "$OPENCAGE_KEY"
+uv run tripsy-exim fix-locations --geocoder opencage --api-key "$OPENCAGE_KEY"
 ```
 
 ## ENVIRONMENT

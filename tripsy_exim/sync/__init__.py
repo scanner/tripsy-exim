@@ -5,9 +5,11 @@ Trip-level orchestration: what to upload, what to download, and when.
 
 Staging parses a source calendar into the archive, where a trip can be
 reviewed and corrected before anything is posted.  The importer then writes
-canonical trips to Tripsy idempotently; the exporter pulls changes back into
-the archive incrementally.  All policy lives here, so `api` stays a transport
-and `sources` stay parsers.
+canonical trips to Tripsy idempotently.  All policy lives here, so `api`
+stays a transport and `sources` stay parsers.
+
+Pulling changes back into the archive incrementally is the half that is
+not written yet, and it belongs here when it is.
 """
 
 # 3rd party imports

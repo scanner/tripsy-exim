@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 """
-Test the TripIt GDPR JSON reader against synthetic exports.
+Test the TripIt JSON export reader against synthetic exports.
 
 The export carries no identifiers and types almost nothing, so most of
 what is asserted here is inference: what a record was decided to be, and

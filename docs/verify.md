@@ -7,6 +7,12 @@ tripsy-exim verify [--archive DIRECTORY] [--trip TEXT]... [--limit N]
                    [--verbose] [--username TEXT] [--password TEXT]
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 Reads trips back from Tripsy and reports what is there against what was
@@ -66,14 +72,14 @@ A trip that did not  [DIFFERS]  46 of 47 planned
 Check the trip just uploaded:
 
 ```sh
-tripsy-exim upload --limit 1 --write
-tripsy-exim verify --limit 1 --verbose
+uv run tripsy-exim upload --limit 1 --write
+uv run tripsy-exim verify --limit 1 --verbose
 ```
 
 Check everything uploaded so far:
 
 ```sh
-tripsy-exim verify
+uv run tripsy-exim verify
 ```
 
 ## NOTES

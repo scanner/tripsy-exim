@@ -7,6 +7,12 @@ tripsy-exim merge [--archive DIRECTORY] ABSORBED TARGET
 tripsy-exim merge [--archive DIRECTORY] --undo ABSORBED
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 Declares that one staged trip should be uploaded into another rather than
@@ -31,7 +37,7 @@ Its own trip key stays in the archive, marked `->` by
 
 Trips are named by **key**, not by name -- the trips this is for share a
 name, which is usually how they were found in the first place. Get the
-keys from `tripsy-exim list`.
+keys from `uv run tripsy-exim list`.
 
 Declare the merge before uploading either trip. Once a trip has been
 created in Tripsy its identifier is spent, and merging it afterwards
@@ -61,9 +67,9 @@ The declaration is refused when:
 Find the duplicate pair, then declare one into the other:
 
 ```sh
-tripsy-exim list | grep 'Lakeside'
-tripsy-exim merge txim-tripit-json-g01-3ec9308... txim-tripit-json-g01-2e2e0dc...
-tripsy-exim upload --dry-run --trip txim-tripit-json-g01-2e2e0dc...
+uv run tripsy-exim list | grep 'Lakeside'
+uv run tripsy-exim merge txim-tripit-json-g01-3ec9308... txim-tripit-json-g01-2e2e0dc...
+uv run tripsy-exim upload --dry-run --trip txim-tripit-json-g01-2e2e0dc...
 ```
 
 ## FILES

@@ -8,6 +8,12 @@ tripsy-exim upload [--archive DIRECTORY] [--trip TEXT]... [--limit N]
                    [--username TEXT] [--password TEXT]
 ```
 
+## RUNNING
+
+Examples below are written as `uv run tripsy-exim`, which is how the
+command runs from a fresh clone. See [the docs README](README.md) for
+when you can drop the `uv run`.
+
 ## DESCRIPTION
 
 Plans what it would send and prints the plan. **Without `--write` that is
@@ -74,21 +80,21 @@ The incremental way through an account -- plan one trip, send it, look at
 it in the app, then take the next:
 
 ```sh
-tripsy-exim upload --limit 1 --verbose
-tripsy-exim upload --limit 1 --write
-tripsy-exim verify --limit 1
+uv run tripsy-exim upload --limit 1 --verbose
+uv run tripsy-exim upload --limit 1 --write
+uv run tripsy-exim verify --limit 1
 ```
 
 Widen once the shape of what arrives is no longer a surprise:
 
 ```sh
-tripsy-exim upload --limit 10 --write
+uv run tripsy-exim upload --limit 10 --write
 ```
 
 One named trip:
 
 ```sh
-tripsy-exim upload --trip 'Lakeside' --write
+uv run tripsy-exim upload --trip 'Lakeside' --write
 ```
 
 ## DIAGNOSTICS

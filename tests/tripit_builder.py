@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 """
-Generate synthetic TripIt-shaped GDPR export documents.
+Generate synthetic TripIt-shaped JSON export documents.
 
 The reader is developed against these rather than against the real export
 kept outside the repository, which is reference material only and
@@ -41,7 +41,7 @@ _UNDEFINED = {0x81, 0x8D, 0x8F, 0x90, 0x9D}
 # these the generator would emit nothing needing recovery, and the
 # untested.  The real export is full of them.
 #
-# Stamped into every generated export.  A real GDPR export cannot carry
+# Stamped into every generated export.  A real JSON export cannot carry
 # it, which is what lets the pre-commit hook tell a generated fixture
 # from a real one -- the same job SYNTHETIC_PRODID does for .ics.
 #
