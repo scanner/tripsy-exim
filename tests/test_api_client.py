@@ -14,6 +14,11 @@ Time is injected, so a test can watch a run back off for two minutes
 without taking two minutes.
 """
 
+# system imports
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
+from typing import Any
+
 # 3rd party imports
 import httpx
 import pytest
@@ -50,6 +55,85 @@ from tripsy_exim.api.retry import DEFAULT as DEFAULT_RETRIES
 # Long enough for trip-level duplicate suppression to engage.
 #
 IDENT = "txim-ics-0123456789abcdef"
+
+
+########################################################################
+########################################################################
+#
+@dataclass
+class Recorder:
+    """
+    A transport handler that remembers what it was asked.
+
+    Tests about retrying and re-authenticating care how many times a
+    request went out and what it carried.  Without this each one keeps
+    its own list or counter and reaches for `nonlocal` to write to it.
+
+    Wrap the handler that decides the response; this one does the
+    remembering and passes the request on.
+    """
+
+    respond: Callable[[httpx.Request], httpx.Response]
+    requests: list[httpx.Request] = field(default_factory=list)
+
+    ####################################################################
+    #
+    @property
+    def calls(self) -> int:
+        """How many requests reached the handler."""
+        return len(self.requests)
+
+    ####################################################################
+    #
+    @property
+    def authorizations(self) -> list[str]:
+        """What each request carried as its Authorization, in order."""
+        return [
+            request.headers.get("Authorization", "")
+            for request in self.requests
+        ]
+
+    ####################################################################
+    #
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the request, then answer it."""
+        self.requests.append(request)
+        return self.respond(request)
+
+
+####################################################################
+#
+@pytest.fixture
+def client_over() -> Iterator[Callable[..., TripsyClient]]:
+    """
+    Build a client answering from a handler rather than from the fake.
+
+    A few behaviours cannot be provoked through the in-memory Tripsy at
+    all -- a refused connection, a request that never answers, a `next`
+    link pointing back at its own page -- so those tests write a handler
+    instead.  This wires one up the way `client_for` wires up a store:
+    jitter pinned so a back-off is one number a test can assert, and the
+    client closed when the test ends rather than in a `with` block that
+    indents the whole test.
+
+    Keyword arguments go to `TripsyClient`, e.g. `pacer` or `token`.
+    """
+    built: list[TripsyClient] = []
+
+    def build(
+        handler: Callable[[httpx.Request], httpx.Response], **kwargs: Any
+    ) -> TripsyClient:
+        kwargs.setdefault("retries", RetryPolicy(jitter=0.0))
+        client = TripsyClient(
+            base_url=BASE, transport=httpx.MockTransport(handler), **kwargs
+        )
+        built.append(client)
+        return client
+
+    yield build
+
+    for client in built:
+        client.close()
 
 
 ########################################################################
@@ -292,7 +376,7 @@ class TestThrottleHandling:
     ####################################################################
     #
     def test_a_refused_connection_backs_the_run_off(
-        self, clock: FakeClock
+        self, clock: FakeClock, client_over: Callable[..., TripsyClient]
     ) -> None:
         """
         GIVEN: a transport that fails instantly rather than slowly
@@ -305,14 +389,10 @@ class TestThrottleHandling:
             raise httpx.ConnectError("refused", request=request)
 
         pacer = Pacer(IMPORT)
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(refuse),
-            pacer=pacer,
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            with pytest.raises(TransportError):
-                client.list_trips_v1()
+        client = client_over(refuse, pacer=pacer)
+
+        with pytest.raises(TransportError):
+            client.list_trips_v1()
 
         check.greater(pacer.delay, IMPORT.min_delay, "backed off")
         check.equal(pacer.failures, 4, "every failure counted")
@@ -820,7 +900,9 @@ class TestRemainingRoutes:
 
     ####################################################################
     #
-    def test_a_page_linking_to_itself_is_caught(self, clock: FakeClock) -> None:
+    def test_a_page_linking_to_itself_is_caught(
+        self, clock: FakeClock, client_over: Callable[..., TripsyClient]
+    ) -> None:
         """
         GIVEN: a paginated route whose next link points at the page it
                came from
@@ -840,12 +922,10 @@ class TestRemainingRoutes:
                 },
             )
 
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(loop),
-        ) as client:
-            with pytest.raises(APIError, match="pagination stalled"):
-                list(client.iter_trips())
+        client = client_over(loop)
+
+        with pytest.raises(APIError, match="pagination stalled"):
+            list(client.iter_trips())
 
 
 ########################################################################
@@ -1005,7 +1085,9 @@ class TestIdempotentRetries:
 
     ####################################################################
     #
-    def test_a_slow_timeout_drives_the_pace_up(self, clock: FakeClock) -> None:
+    def test_a_slow_timeout_drives_the_pace_up(
+        self, clock: FakeClock, client_over: Callable[..., TripsyClient]
+    ) -> None:
         """
         GIVEN: requests that hang and then time out
         WHEN:  the client gives up on them
@@ -1019,14 +1101,10 @@ class TestIdempotentRetries:
             raise httpx.ReadTimeout("timed out", request=request)
 
         pacer = Pacer(IMPORT)
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(hang),
-            pacer=pacer,
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            with pytest.raises(TransportError):
-                client.list_trips_v1()
+        client = client_over(hang, pacer=pacer)
+
+        with pytest.raises(TransportError):
+            client.list_trips_v1()
 
         check.equal(pacer.latency, pytest.approx(30.0), "the wait counted")
         check.equal(
@@ -1095,6 +1173,7 @@ class TestTimeouts:
     def test_a_timed_out_create_is_retried_only_when_idempotent(
         self,
         clock: FakeClock,
+        client_over: Callable[..., TripsyClient],
         payload: dict[str, str],
         expected_sends: int,
     ) -> None:
@@ -1105,22 +1184,18 @@ class TestTimeouts:
                object -- a timeout is judged on the payload, exactly as
                a 502 is
         """
-        sent = []
 
         def hang(request: httpx.Request) -> httpx.Response:
-            sent.append(request)
             clock.advance(30.0)
             raise httpx.ReadTimeout("timed out", request=request)
 
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(hang),
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            with pytest.raises(TransportError):
-                client.create_trip(payload)
+        sent = Recorder(hang)
+        client = client_over(sent)
 
-        assert len(sent) == expected_sends
+        with pytest.raises(TransportError):
+            client.create_trip(payload)
+
+        assert sent.calls == expected_sends
 
     ####################################################################
     #
@@ -1151,8 +1226,25 @@ class TestReauthentication:
 
     ####################################################################
     #
+    @pytest.fixture
+    def always_refuses(self) -> Recorder:
+        """
+        A handler that answers 401 whatever token it is shown.
+
+        Shared by the two tests below, which differ only in whether the
+        client has anywhere to get a replacement token from -- and so in
+        how many times this is asked.
+        """
+        return Recorder(
+            lambda request: httpx.Response(
+                401, json={"detail": "Invalid token."}
+            )
+        )
+
+    ####################################################################
+    #
     def test_a_refused_token_is_replaced_and_the_request_retried(
-        self,
+        self, client_over: Callable[..., TripsyClient]
     ) -> None:
         """
         GIVEN: a client holding a spent token and a way to get another
@@ -1162,29 +1254,32 @@ class TestReauthentication:
         A cached token has no stated lifetime, so being refused is the
         only way to learn it is spent.
         """
-        seen: list[str] = []
 
         def answer(request: httpx.Request) -> httpx.Response:
-            header = request.headers.get("Authorization", "")
-            seen.append(header)
-            if header == "Token stale":
+            if request.headers.get("Authorization", "") == "Token stale":
                 return httpx.Response(401, json={"detail": "Invalid token."})
             return httpx.Response(200, json={"results": [], "count": 0})
 
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(answer),
-            token="stale",
-            reauthenticate=lambda: "fresh",
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            client.list_trips_v1()
+        seen = Recorder(answer)
+        client = client_over(
+            seen, token="stale", reauthenticate=lambda: "fresh"
+        )
 
-        check.equal(seen, ["Token stale", "Token fresh"], "replaced once")
+        client.list_trips_v1()
+
+        check.equal(
+            seen.authorizations,
+            ["Token stale", "Token fresh"],
+            "replaced once",
+        )
 
     ####################################################################
     #
-    def test_a_second_refusal_is_raised_rather_than_looped(self) -> None:
+    def test_a_second_refusal_is_raised_rather_than_looped(
+        self,
+        client_over: Callable[..., TripsyClient],
+        always_refuses: Recorder,
+    ) -> None:
         """
         GIVEN: a replacement token that is refused too
         WHEN:  a request is made
@@ -1193,28 +1288,22 @@ class TestReauthentication:
         A second refusal is about the credentials rather than the token,
         so retrying it would be an unbounded loop against the API.
         """
-        attempts = 0
+        client = client_over(
+            always_refuses, token="stale", reauthenticate=lambda: "fresh"
+        )
 
-        def refuse(request: httpx.Request) -> httpx.Response:
-            nonlocal attempts
-            attempts += 1
-            return httpx.Response(401, json={"detail": "Invalid token."})
+        with pytest.raises(AuthenticationError):
+            client.list_trips_v1()
 
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(refuse),
-            token="stale",
-            reauthenticate=lambda: "fresh",
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            with pytest.raises(AuthenticationError):
-                client.list_trips_v1()
-
-        check.equal(attempts, 2, "the original and one replacement")
+        check.equal(always_refuses.calls, 2, "the original and one replacement")
 
     ####################################################################
     #
-    def test_without_a_hook_a_refusal_is_raised_at_once(self) -> None:
+    def test_without_a_hook_a_refusal_is_raised_at_once(
+        self,
+        client_over: Callable[..., TripsyClient],
+        always_refuses: Recorder,
+    ) -> None:
         """
         GIVEN: a client with no way to get another token
         WHEN:  a request is refused as unauthenticated
@@ -1223,20 +1312,9 @@ class TestReauthentication:
         Which is right for a token given on the command line: there is
         nowhere to get a replacement from.
         """
-        attempts = 0
+        client = client_over(always_refuses, token="stale")
 
-        def refuse(request: httpx.Request) -> httpx.Response:
-            nonlocal attempts
-            attempts += 1
-            return httpx.Response(401, json={"detail": "Invalid token."})
+        with pytest.raises(AuthenticationError):
+            client.list_trips_v1()
 
-        with TripsyClient(
-            base_url=BASE,
-            transport=httpx.MockTransport(refuse),
-            token="stale",
-            retries=RetryPolicy(jitter=0.0),
-        ) as client:
-            with pytest.raises(AuthenticationError):
-                client.list_trips_v1()
-
-        check.equal(attempts, 1, "no replacement was attempted")
+        check.equal(always_refuses.calls, 1, "no replacement was attempted")
