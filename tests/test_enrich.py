@@ -7,10 +7,17 @@ Trips are built here by hand rather than drawn from a generator.  What
 is under test is which object a moment resolves to and where a
 coordinate lands, and both are clearest when the instants are written
 down where the assertion can see them.
+
+`trip_of` is a fixture, so a test says in its signature that it builds
+trips.  `at` and `placed` stay plain functions: they construct values
+rather than inputs, and `at` is read at collection time by a parametrize
+decorator, where no fixture exists yet.
 """
 
 # system imports
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 # 3rd party imports
@@ -23,14 +30,24 @@ from tripsy_exim.sources import ACTIVITY, HOSTING, TRANSPORTATION, EventNote
 from tripsy_exim.sources.ics import ParsedCalendar
 from tripsy_exim.sync import DIVERGENCE_KM, enrich
 
+# Places, named so a test reads as somewhere rather than as two floats.
+# The last three are the pairs the divergence threshold was drawn
+# between: an airport against the city a calendar names for it, and a
+# mismatch no distance explains.
+#
 TOKYO = (35.6812, 139.7671)
 KYOTO = (35.0116, 135.7681)
+NARITA = (35.7647, 140.3864)
+TOKYO_STATION = (35.6762, 139.6503)
+VANCOUVER = (49.1947, -123.1792)
 
 KIND_FOR = {
     Hosting: HOSTING,
     Activity: ACTIVITY,
     Transportation: TRANSPORTATION,
 }
+
+TripObject = Hosting | Activity | Transportation
 
 
 ####################################################################
@@ -42,40 +59,80 @@ def at(hour: int, day: int = 1) -> datetime:
 
 ####################################################################
 #
-def token(name: str) -> str:
+def placed[T: TripObject](
+    obj: T, where: tuple[float, float], prefix: str = ""
+) -> T:
+    """
+    Put an object somewhere, and give it back.
+
+    The position is set on the built object rather than passed to its
+    constructor.  A `**` of latitude and longitude is opaque to mypy,
+    which then stops checking the object's other fields too, and these
+    models carry enough fields for that to matter.
+
+    Args:
+        obj: The object to place.  Returned, so a test builds and places
+            in one expression.
+        where: Latitude and longitude, from the constants above.
+        prefix: Which end of a leg, e.g. 'arrival_'.  Empty for an
+            object that keeps one position.
+
+    Returns:
+        The same object, now carrying a position.
+    """
+    setattr(obj, f"{prefix}latitude", where[0])
+    setattr(obj, f"{prefix}longitude", where[1])
+    return obj
+
+
+####################################################################
+#
+def _token(name: str) -> str:
     """A stable uuid standing in for a source record's own."""
     return str(uuid5(NAMESPACE_URL, f"https://example.invalid/{name}"))
 
 
 ####################################################################
 #
-def trip_of(*objects: Hosting | Activity | Transportation) -> ParsedCalendar:
-    """A parsed trip holding these objects, each with a source uuid."""
-    parsed = ParsedCalendar(
-        trip=Trip(internal_identifier=mint("test", "trip")), join_key="k"
-    )
-    for obj in objects:
-        name = obj.name or ""
-        obj.internal_identifier = mint("test", name)
-        if isinstance(obj, Hosting):
-            parsed.hostings.append(obj)
-        elif isinstance(obj, Transportation):
-            parsed.transportations.append(obj)
-        else:
-            parsed.activities.append(obj)
-        parsed.notes.append(
-            EventNote(
-                uid=token(name),
-                identifier=obj.internal_identifier,
-                kind=KIND_FOR[type(obj)],
-                summary=name,
-                confident=True,
-                reason="built for a test",
-                timezone=None,
-                timezone_source="none",
-            )
+@pytest.fixture
+def trip_of() -> Callable[..., ParsedCalendar]:
+    """
+    Build a parsed trip holding the objects a test names.
+
+    Each object is filed into the collection its type belongs to, given
+    a minted identifier, and paired with the `EventNote` the reader
+    would have produced for it -- which is what enrichment matches on,
+    so a trip without notes matches nothing.
+    """
+
+    def build(*objects: TripObject) -> ParsedCalendar:
+        parsed = ParsedCalendar(
+            trip=Trip(internal_identifier=mint("test", "trip")), join_key="k"
         )
-    return parsed
+        for obj in objects:
+            name = obj.name or ""
+            obj.internal_identifier = mint("test", name)
+            if isinstance(obj, Hosting):
+                parsed.hostings.append(obj)
+            elif isinstance(obj, Transportation):
+                parsed.transportations.append(obj)
+            else:
+                parsed.activities.append(obj)
+            parsed.notes.append(
+                EventNote(
+                    uid=_token(name),
+                    identifier=obj.internal_identifier,
+                    kind=KIND_FOR[type(obj)],
+                    summary=name,
+                    confident=True,
+                    reason="built for a test",
+                    timezone=None,
+                    timezone_source="none",
+                )
+            )
+        return parsed
+
+    return build
 
 
 ########################################################################
@@ -86,7 +143,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_an_event_fills_a_place_the_export_left_blank(self) -> None:
+    def test_an_event_fills_a_place_the_export_left_blank(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: an export activity with neither a position nor an address
         WHEN:  the calendar event at the same instant is matched to it
@@ -98,12 +157,7 @@ class TestMatching:
         """
         target = trip_of(Activity(name="Yuushien Garden", starts_at=at(10)))
         source = trip_of(
-            Activity(
-                name="Yuushien Garden",
-                starts_at=at(10),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Yuushien Garden", starts_at=at(10)), TOKYO)
         )
 
         result = enrich(target, source)
@@ -122,7 +176,7 @@ class TestMatching:
     ####################################################################
     #
     def test_an_object_with_an_address_is_left_for_tripsy_to_place(
-        self,
+        self, trip_of: Callable[..., ParsedCalendar]
     ) -> None:
         """
         GIVEN: an export activity carrying an address but no position
@@ -139,12 +193,7 @@ class TestMatching:
             Activity(name="Yuushien Garden", starts_at=at(10), address="Matsue")
         )
         source = trip_of(
-            Activity(
-                name="Yuushien Garden",
-                starts_at=at(10),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Yuushien Garden", starts_at=at(10)), TOKYO)
         )
 
         result = enrich(target, source)
@@ -154,7 +203,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_a_leg_is_judged_per_end(self) -> None:
+    def test_a_leg_is_judged_per_end(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: an export leg with a departure address and no arrival one
         WHEN:  a calendar event matches its arrival
@@ -172,12 +223,7 @@ class TestMatching:
             )
         )
         source = trip_of(
-            Activity(
-                name="Drop off",
-                starts_at=at(17),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Drop off", starts_at=at(17)), TOKYO)
         )
 
         result = enrich(target, source)
@@ -186,7 +232,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_a_value_the_export_supplied_is_never_replaced(self) -> None:
+    def test_a_value_the_export_supplied_is_never_replaced(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: an export object that already carries coordinates
         WHEN:  a calendar event offers different ones
@@ -196,20 +244,10 @@ class TestMatching:
         match can add a wrong value but can never destroy a right one.
         """
         target = trip_of(
-            Activity(
-                name="Museum",
-                starts_at=at(10),
-                latitude=KYOTO[0],
-                longitude=KYOTO[1],
-            )
+            placed(Activity(name="Museum", starts_at=at(10)), KYOTO)
         )
         source = trip_of(
-            Activity(
-                name="Museum",
-                starts_at=at(10),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Museum", starts_at=at(10)), TOKYO)
         )
 
         result = enrich(target, source)
@@ -219,7 +257,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_a_check_out_event_lands_on_the_stay_it_ends(self) -> None:
+    def test_a_check_out_event_lands_on_the_stay_it_ends(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: an export stay spanning two days
         WHEN:  the calendar's check-out event is matched
@@ -233,11 +273,9 @@ class TestMatching:
             Hosting(name="Hotel", starts_at=at(15), ends_at=at(10, day=3))
         )
         source = trip_of(
-            Hosting(
-                name="Check-out: Hotel",
-                starts_at=at(10, day=3),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
+            placed(
+                Hosting(name="Check-out: Hotel", starts_at=at(10, day=3)),
+                TOKYO,
             )
         )
 
@@ -249,7 +287,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_an_event_matching_nothing_is_reported(self) -> None:
+    def test_an_event_matching_nothing_is_reported(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: a calendar event at an instant the export does not use
         WHEN:  it is matched
@@ -266,7 +306,7 @@ class TestMatching:
     ####################################################################
     #
     def test_an_ambiguous_instant_is_refused_rather_than_guessed(
-        self,
+        self, trip_of: Callable[..., ParsedCalendar]
     ) -> None:
         """
         GIVEN: two export objects starting at one instant
@@ -281,12 +321,7 @@ class TestMatching:
             Activity(name="Talk", starts_at=at(12)),
         )
         source = trip_of(
-            Activity(
-                name="Something Else",
-                starts_at=at(12),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Something Else", starts_at=at(12)), TOKYO)
         )
 
         result = enrich(target, source)
@@ -296,7 +331,9 @@ class TestMatching:
 
     ####################################################################
     #
-    def test_a_name_breaks_a_tie_the_instant_cannot(self) -> None:
+    def test_a_name_breaks_a_tie_the_instant_cannot(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: two export objects at one instant, one sharing the name
         WHEN:  a calendar event is matched
@@ -306,14 +343,7 @@ class TestMatching:
             Activity(name="Lunch", starts_at=at(12)),
             Activity(name="Talk", starts_at=at(12)),
         )
-        source = trip_of(
-            Activity(
-                name="Talk",
-                starts_at=at(12),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
-        )
+        source = trip_of(placed(Activity(name="Talk", starts_at=at(12)), TOKYO))
 
         result = enrich(target, source)
 
@@ -339,7 +369,11 @@ class TestWhereCoordinatesLand:
         ids=["pick-up", "drop-off"],
     )
     def test_a_leg_takes_its_place_from_the_end_that_matched(
-        self, moment: datetime, endpoint: str, expected: str
+        self,
+        trip_of: Callable[..., ParsedCalendar],
+        moment: datetime,
+        endpoint: str,
+        expected: str,
     ) -> None:
         """
         GIVEN: an export car rental spanning a day
@@ -353,12 +387,7 @@ class TestWhereCoordinatesLand:
             Transportation(name="Car", departure_at=at(9), arrival_at=at(17))
         )
         source = trip_of(
-            Activity(
-                name="Rental",
-                starts_at=moment,
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
+            placed(Activity(name="Rental", starts_at=moment), TOKYO)
         )
 
         result = enrich(target, source)
@@ -368,7 +397,9 @@ class TestWhereCoordinatesLand:
 
     ####################################################################
     #
-    def test_a_legs_own_event_always_names_its_arrival(self) -> None:
+    def test_a_legs_own_event_always_names_its_arrival(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: a calendar leg, whose place is where it ends
         WHEN:  it matches an export leg on that leg's start
@@ -384,11 +415,10 @@ class TestWhereCoordinatesLand:
             Transportation(name="Leg", departure_at=at(9), arrival_at=at(12))
         )
         source = trip_of(
-            Transportation(
-                name="Leg",
-                departure_at=at(9),
-                arrival_latitude=KYOTO[0],
-                arrival_longitude=KYOTO[1],
+            placed(
+                Transportation(name="Leg", departure_at=at(9)),
+                KYOTO,
+                "arrival_",
             )
         )
 
@@ -421,6 +451,7 @@ class TestConflicts:
     )
     def test_two_events_are_applied_only_where_they_agree(
         self,
+        trip_of: Callable[..., ParsedCalendar],
         checkout: tuple[float, float],
         conflicts: int,
         applied: dict[str, float],
@@ -438,23 +469,15 @@ class TestConflicts:
             Hosting(name="Hotel", starts_at=at(15), ends_at=at(10, day=3))
         )
         source = trip_of(
-            Hosting(
-                name="Check-in",
-                starts_at=at(15),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            ),
-            Hosting(
-                name="Check-out",
-                starts_at=at(10, day=3),
-                latitude=checkout[0],
-                longitude=checkout[1],
+            placed(Hosting(name="Check-in", starts_at=at(15)), TOKYO),
+            placed(
+                Hosting(name="Check-out", starts_at=at(10, day=3)), checkout
             ),
         )
 
         result = enrich(target, source)
 
-        fields: dict[str, float] = {}
+        fields: dict[str, Any] = {}
         for entry in result.overrides.entries.values():
             fields.update(entry.fields)
         check.equal(len(result.conflicts), conflicts, "latitude and longitude")
@@ -475,7 +498,9 @@ class TestDivergence:
 
     ####################################################################
     #
-    def test_a_small_difference_is_not_reported(self) -> None:
+    def test_a_small_difference_is_not_reported(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: two sources placing one thing a city's width apart
         WHEN:  they are matched
@@ -485,20 +510,10 @@ class TestDivergence:
         every such pair in the reference corpus is of that kind.
         """
         target = trip_of(
-            Activity(
-                name="Arrival",
-                starts_at=at(10),
-                latitude=35.7647,
-                longitude=140.3864,
-            )
+            placed(Activity(name="Arrival", starts_at=at(10)), NARITA)
         )
         source = trip_of(
-            Activity(
-                name="Arrival",
-                starts_at=at(10),
-                latitude=35.6762,
-                longitude=139.6503,
-            )
+            placed(Activity(name="Arrival", starts_at=at(10)), TOKYO_STATION)
         )
 
         result = enrich(target, source)
@@ -508,7 +523,9 @@ class TestDivergence:
 
     ####################################################################
     #
-    def test_a_difference_too_large_to_explain_is_reported(self) -> None:
+    def test_a_difference_too_large_to_explain_is_reported(
+        self, trip_of: Callable[..., ParsedCalendar]
+    ) -> None:
         """
         GIVEN: two sources placing one thing continents apart
         WHEN:  they are matched
@@ -518,21 +535,9 @@ class TestDivergence:
         are cross-matched.  Nothing is corrected either way -- the export
         keeps its own value -- so the report is the whole point.
         """
-        target = trip_of(
-            Activity(
-                name="Leg",
-                starts_at=at(10),
-                latitude=TOKYO[0],
-                longitude=TOKYO[1],
-            )
-        )
+        target = trip_of(placed(Activity(name="Leg", starts_at=at(10)), TOKYO))
         source = trip_of(
-            Activity(
-                name="Leg",
-                starts_at=at(10),
-                latitude=49.1947,
-                longitude=-123.1792,
-            )
+            placed(Activity(name="Leg", starts_at=at(10)), VANCOUVER)
         )
 
         result = enrich(target, source)
