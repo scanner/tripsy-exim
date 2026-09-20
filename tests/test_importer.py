@@ -7,10 +7,17 @@ The import is the one irreversible step in the project -- an identifier
 Tripsy has seen is never released -- so what is asserted here is mostly
 that a second run does nothing, and that the plan a person reads before
 the first run matches what the first run actually sends.
+
+Setup lives in fixtures rather than in the tests.  What a trip has to
+look like before a behaviour can be provoked is often longer than the
+behaviour itself, and a test that opens with twenty lines of staging
+reads as though the staging were the point.  Each fixture's docstring
+says what it builds, so a test can name it and get on with asserting.
 """
 
 # system imports
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 # 3rd party imports
@@ -24,6 +31,7 @@ from tripsy_exim.models import namespace_of
 from tripsy_exim.store import Archive
 from tripsy_exim.sync import REPORT_FILENAME, stage_export
 from tripsy_exim.sync.importer import (
+    TripImport,
     added,
     child_ids_by_identifier,
     corrections,
@@ -40,6 +48,33 @@ from tripsy_exim.sync.importer import (
     verify_trip,
 )
 from tripsy_exim.sync.overrides import OverrideSet, save_overrides
+
+
+####################################################################
+#
+def only_key(archive: Archive) -> str:
+    """The single trip key in an archive holding exactly one trip."""
+    keys = archive.trip_keys()
+    assert len(keys) == 1
+    return keys[0]
+
+
+####################################################################
+#
+def by_size(archive: Archive) -> tuple[str, str]:
+    """
+    The two trip keys in an archive, fewest objects first.
+
+    Which of a pair absorbs the other is decided by object count, so the
+    two halves of a merge are named this way rather than by key order,
+    which is a digest and means nothing.
+    """
+    keys = archive.trip_keys()
+    assert len(keys) == 2
+    smaller, larger = sorted(
+        keys, key=lambda k: len(list(staged_children(archive, k)))
+    )
+    return smaller, larger
 
 
 ####################################################################
@@ -67,11 +102,114 @@ def staged(archive: Archive) -> Archive:
 
 ####################################################################
 #
-def only_key(archive: Archive) -> str:
-    """The single trip key in an archive staged by the fixture."""
-    keys = archive.trip_keys()
-    assert len(keys) == 1
-    return keys[0]
+@pytest.fixture
+def staged_key(staged: Archive) -> str:
+    """The key of the one trip `staged` holds."""
+    return only_key(staged)
+
+
+####################################################################
+#
+@pytest.fixture
+def uploaded(
+    staged: Archive, staged_key: str, api_client: TripsyClient
+) -> TripImport:
+    """
+    The `staged` trip, uploaded, with its Tripsy id resolved.
+
+    Reading a trip back needs one that is there, and every test that
+    does so wants the same trip in the same state.  The id is asserted
+    here so no test has to repeat the check before using it.
+    """
+    result = upload_trip(api_client, staged, staged_key)
+    assert result.trip_id is not None
+    return result
+
+
+########################################################################
+########################################################################
+#
+@dataclass
+class FerryTrip:
+    """
+    One staged trip holding a single ferry, and the handles to correct it.
+
+    Corrections are keyed by the source record's uuid, which lives in the
+    reader's report rather than on the object, so reaching one means
+    staging the trip, reading `report.json`, and picking the entry out of
+    its index.  That is four lines of lookup before a test can say what
+    it actually wants to correct, which is what this carries.
+    """
+
+    archive: Archive
+    key: str
+    trip_uuid: str
+    document: dict[str, Any]
+    index: dict[str, dict[str, str]]
+    overrides: OverrideSet = field(init=False)
+
+    ####################################################################
+    #
+    def __post_init__(self) -> None:
+        self.overrides = OverrideSet(trip_uuid=self.trip_uuid)
+
+    ####################################################################
+    #
+    @property
+    def leg_uuid(self) -> str:
+        """The source uuid of the trip's one transportation."""
+        return next(
+            uuid
+            for uuid, entry in self.index.items()
+            if entry["collection"] == "transportations"
+        )
+
+    ####################################################################
+    #
+    def correct(self, **fields: Any) -> None:
+        """Correct the trip's ferry, and save."""
+        self.overrides.correct(self.leg_uuid, **fields)
+        save_overrides(self.archive, self.overrides)
+
+    ####################################################################
+    #
+    def add(self, collection: str = "transportations", **fields: Any) -> None:
+        """Add an object no source record held, and save."""
+        self.overrides.add("a1", collection, **fields)
+        save_overrides(self.archive, self.overrides)
+
+    ####################################################################
+    #
+    def stage_again(self, namespace: str | None = None) -> None:
+        """Stage the same export again, optionally into another namespace."""
+        if namespace is None:
+            stage_export(self.archive, self.document)
+        else:
+            stage_export(self.archive, self.document, namespace)
+
+
+####################################################################
+#
+@pytest.fixture
+def ferry_trip(archive: Archive) -> FerryTrip:
+    """
+    One staged trip carrying a single ferry, ready to be corrected.
+
+    A ferry because the export gives one no address and a name taken
+    from the carrier, so it is the object a correction is actually for.
+    See `FerryTrip` for what comes with it.
+    """
+    document = b.export(b.trip(objects=[b.ferry()]))
+    stage_export(archive, document)
+    key = only_key(archive)
+    report = json.loads((archive.trip_dir(key) / REPORT_FILENAME).read_text())
+    return FerryTrip(
+        archive=archive,
+        key=key,
+        trip_uuid=report["trip_uuid"],
+        document=document,
+        index=report["index"],
+    )
 
 
 ########################################################################
@@ -83,7 +221,7 @@ class TestPlan:
     ####################################################################
     #
     def test_a_trip_is_numbered_chronologically_across_collections(
-        self, staged: Archive
+        self, staged: Archive, staged_key: str
     ) -> None:
         """
         GIVEN: a trip whose objects span all three collections
@@ -94,7 +232,7 @@ class TestPlan:
         nothing, so a per-collection numbering would group a trip by
         object type instead of by day.
         """
-        plan = plan_trip(staged, only_key(staged))
+        plan = plan_trip(staged, staged_key)
 
         orders = [o.sort_order for o in plan.objects]
         check.equal(orders, list(range(1, len(plan.objects) + 1)), "dense")
@@ -134,7 +272,7 @@ class TestPlan:
     ####################################################################
     #
     def test_numbering_one_trip_twice_gives_one_answer(
-        self, staged: Archive
+        self, staged: Archive, staged_key: str
     ) -> None:
         """
         GIVEN: one staged trip
@@ -145,7 +283,7 @@ class TestPlan:
         updating it, so a number that drifted between runs could never be
         corrected by running again.
         """
-        objects = list(staged_children(staged, only_key(staged)))
+        objects = list(staged_children(staged, staged_key))
 
         first = [(n, o.internal_identifier) for n, o in numbered(objects)]
         second = [
@@ -168,7 +306,7 @@ class TestPlan:
         reader nothing before the one irreversible step.
         """
         stage_export(archive, b.export(b.trip(objects=[b.flight()])))
-        plan = plan_trip(archive, archive.trip_keys()[0])
+        plan = plan_trip(archive, only_key(archive))
 
         check.equal(plan.objects[0].name, "SAN to OSA")
 
@@ -213,18 +351,53 @@ class TestImport:
 
     ####################################################################
     #
+    @pytest.fixture
+    def partly_written(
+        self,
+        staged: Archive,
+        staged_key: str,
+        paced_tripsy: Any,
+    ) -> tuple[int, Any]:
+        """
+        A trip left as a run that died part way through would leave it.
+
+        The trip record and exactly one of its children are written by
+        hand, the child carrying a sort_order no plan would ever give it
+        so that a resumed run can be seen to leave it alone.
+
+        Returns the trip's Tripsy id and the planned object that was
+        written.
+        """
+        trip = staged_trip(staged, staged_key)
+        assert trip is not None
+        _, created = paced_tripsy.create_trip(trip.writable_payload())
+        trip_id = created["id"]
+
+        first = plan_trip(staged, staged_key).objects[0]
+        paced_tripsy.create_child(
+            trip_id,
+            first.collection,
+            {"internal_identifier": first.identifier, "sort_order": 999},
+        )
+        return trip_id, first
+
+    ####################################################################
+    #
     def test_a_trip_and_its_children_are_created(
-        self, staged: Archive, api_client: TripsyClient, paced_tripsy: Any
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        paced_tripsy: Any,
     ) -> None:
         """
         GIVEN: one staged trip
         WHEN:  it is imported
         THEN:  the trip and every child object are created
         """
-        key = only_key(staged)
-        plan = plan_trip(staged, key)
+        plan = plan_trip(staged, staged_key)
 
-        result = upload_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, staged_key)
 
         check.is_true(result.trip_created, "trip created")
         check.is_not_none(result.trip_id, "and its id resolved")
@@ -235,7 +408,11 @@ class TestImport:
     ####################################################################
     #
     def test_every_object_carries_its_planned_sort_order(
-        self, staged: Archive, api_client: TripsyClient
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: one staged trip
@@ -245,15 +422,12 @@ class TestImport:
         An import that omitted the field would leave every object on 0,
         which is what the API does when it is absent.
         """
-        key = only_key(staged)
-        plan = plan_trip(staged, key)
-
-        result = upload_trip(api_client, staged, key)
-        assert result.trip_id is not None
+        plan = plan_trip(staged, staged_key)
+        assert uploaded.trip_id is not None
 
         held: dict[str, int] = {}
         for collection in ("transportations", "hostings", "activities"):
-            for obj in api_client.iter_children(result.trip_id, collection):
+            for obj in api_client.iter_children(uploaded.trip_id, collection):
                 held[str(obj["internal_identifier"])] = obj["sort_order"]
 
         expected = {o.identifier: o.sort_order for o in plan.objects}
@@ -263,7 +437,11 @@ class TestImport:
     ####################################################################
     #
     def test_a_second_run_creates_nothing(
-        self, staged: Archive, api_client: TripsyClient
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: a trip that has already been imported
@@ -273,50 +451,40 @@ class TestImport:
         This is the whole reason identifiers are derived from the source
         rather than minted per run.
         """
-        key = only_key(staged)
-        first = upload_trip(api_client, staged, key)
+        second = upload_trip(api_client, staged, staged_key)
 
-        second = upload_trip(api_client, staged, key)
-
-        check.equal(second.trip_id, first.trip_id, "the same trip")
+        check.equal(second.trip_id, uploaded.trip_id, "the same trip")
         check.is_false(second.trip_created, "which was not created again")
         check.equal(second.created, 0, "no child created")
-        check.equal(second.existing, first.created, "all resolved as present")
+        check.equal(
+            second.existing, uploaded.created, "all resolved as present"
+        )
 
         assert second.trip_id is not None
         counted = sum(
             len(list(api_client.iter_children(second.trip_id, collection)))
             for collection in ("transportations", "hostings", "activities")
         )
-        check.equal(counted, first.created, "and no duplicates on the trip")
+        check.equal(counted, uploaded.created, "and no duplicates on the trip")
 
     ####################################################################
     #
     def test_a_run_resumes_after_a_partial_one(
-        self, staged: Archive, api_client: TripsyClient, paced_tripsy: Any
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        partly_written: tuple[int, Any],
     ) -> None:
         """
         GIVEN: a trip whose children were only partly written
         WHEN:  the import is run again
         THEN:  the missing ones are created and the rest left alone
         """
-        key = only_key(staged)
-        plan = plan_trip(staged, key)
+        trip_id, first = partly_written
+        plan = plan_trip(staged, staged_key)
 
-        # Write the trip and one child by hand, as a failed run would
-        # have left it.
-        trip = staged_trip(staged, key)
-        assert trip is not None
-        _, created = paced_tripsy.create_trip(trip.writable_payload())
-        trip_id = created["id"]
-        first = plan.objects[0]
-        paced_tripsy.create_child(
-            trip_id,
-            first.collection,
-            {"internal_identifier": first.identifier, "sort_order": 999},
-        )
-
-        result = upload_trip(api_client, staged, key)
+        result = upload_trip(api_client, staged, staged_key)
 
         check.is_false(result.trip_created, "the trip was already there")
         check.equal(result.existing, 1, "the one child already written")
@@ -332,7 +500,14 @@ class TestImport:
         }
         check.equal(held[first.identifier], 999, "the partial run's value")
         for obj in plan.objects:
-            if obj.collection == first.collection and obj is not first:
+            # Compared by identifier rather than identity: `first` came
+            # from the fixture's own plan, and planning again builds new
+            # objects for the same records.
+            #
+            if (
+                obj.collection == first.collection
+                and obj.identifier != first.identifier
+            ):
                 check.equal(
                     held[obj.identifier], obj.sort_order, "the planned value"
                 )
@@ -340,7 +515,11 @@ class TestImport:
     ####################################################################
     #
     def test_children_resolve_back_to_their_ids(
-        self, staged: Archive, api_client: TripsyClient
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: an imported trip
@@ -350,15 +529,13 @@ class TestImport:
         A duplicate create answers an empty 200 with no id, so this is
         the only way to reach an object that is already there.
         """
-        key = only_key(staged)
-        result = upload_trip(api_client, staged, key)
-        assert result.trip_id is not None
+        assert uploaded.trip_id is not None
 
         found = child_ids_by_identifier(
-            api_client, result.trip_id, "transportations"
+            api_client, uploaded.trip_id, "transportations"
         )
 
-        plan = plan_trip(staged, key)
+        plan = plan_trip(staged, staged_key)
         wanted = {
             o.identifier
             for o in plan.objects
@@ -395,7 +572,8 @@ class TestMerge:
 
         One traveller flew from one airport and one from another, each
         with their own room, and one of the two records the itinerary
-        they shared.
+        they shared.  Given fewest objects first, which is the direction
+        a merge runs.
         """
         stage_export(
             archive,
@@ -414,12 +592,74 @@ class TestMerge:
                 ),
             ),
         )
-        keys = archive.trip_keys()
-        assert len(keys) == 2
-        smaller, larger = sorted(
-            keys, key=lambda k: len(list(staged_children(archive, k)))
+        return by_size(archive)
+
+    ####################################################################
+    #
+    @pytest.fixture
+    def sharing_a_flight(self, archive: Archive) -> tuple[str, str]:
+        """
+        Two trips of one journey that both record the same flight.
+
+        Two travellers on one flight each carry that flight in their own
+        record, and identifiers cannot catch it: they are derived per
+        trip, so one flight in two records mints two of them.  Given
+        fewest objects first.
+        """
+        shared = b.flight()
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="Burlington, VT, September 2010",
+                    objects=[shared, b.restaurant()],
+                ),
+                b.trip(
+                    name="Burlington, VT, September 2010",
+                    objects=[shared],
+                ),
+            ),
         )
-        return smaller, larger
+        return by_size(archive)
+
+    ####################################################################
+    #
+    @pytest.fixture
+    def weekend_and_day(self, archive: Archive) -> tuple[str, str]:
+        """
+        A weekend booking and a day trip inside it, given in that order.
+
+        The record doing the absorbing need not be the one that ran
+        longest: the weekend reached the archive as a hotel booking
+        alone, and the day trip is the record with more objects.  Left
+        alone the merged trip would say it lasted an afternoon.
+        """
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="San Francisco, CA, July 2012",
+                    start="2012-07-06",
+                    end="2012-07-08",
+                    objects=[b.lodging()],
+                ),
+                b.trip(
+                    name="Angel Island",
+                    start="2012-07-07",
+                    end="2012-07-07",
+                    objects=[b.activity(), b.restaurant()],
+                ),
+            ),
+        )
+        keys = archive.trip_keys()
+        day = next(
+            key
+            for key in keys
+            if str(getattr(staged_trip(archive, key), "name", ""))
+            == "Angel Island"
+        )
+        weekend = next(key for key in keys if key != day)
+        return weekend, day
 
     ####################################################################
     #
@@ -482,7 +722,7 @@ class TestMerge:
         WHEN:  it is declared
         THEN:  ValueError says so
         """
-        smaller, larger = pair
+        _, larger = pair
         absorbed = larger if wrong == "itself" else "txim-nothing-g01-dead"
 
         with pytest.raises(ValueError):
@@ -510,36 +750,14 @@ class TestMerge:
     ####################################################################
     #
     def test_an_object_the_target_already_has_is_not_sent_twice(
-        self, archive: Archive
+        self, archive: Archive, sharing_a_flight: tuple[str, str]
     ) -> None:
         """
         GIVEN: two trips of one journey that share a flight
         WHEN:  one is merged into the other
         THEN:  the shared flight is planned once, and counted as skipped
-
-        Two travellers on one flight each carry that flight in their own
-        record.  Identifiers cannot catch it: they are derived per trip,
-        so the same flight in two records mints two of them and both
-        would be created.
         """
-        shared = b.flight()
-        stage_export(
-            archive,
-            b.export(
-                b.trip(
-                    name="Burlington, VT, September 2010",
-                    objects=[shared, b.restaurant()],
-                ),
-                b.trip(
-                    name="Burlington, VT, September 2010",
-                    objects=[shared],
-                ),
-            ),
-        )
-        keys = archive.trip_keys()
-        smaller, larger = sorted(
-            keys, key=lambda k: len(list(staged_children(archive, k)))
-        )
+        smaller, larger = sharing_a_flight
 
         declare_merge(archive, smaller, larger)
         plan = plan_trip(archive, larger)
@@ -568,7 +786,7 @@ class TestMerge:
             b.export(b.trip(objects=[b.rail(), b.rail(), b.restaurant()])),
         )
 
-        plan = plan_trip(archive, archive.trip_keys()[0])
+        plan = plan_trip(archive, only_key(archive))
 
         check.equal(plan.duplicates, 1, "the second copy was skipped")
         legs = [o for o in plan.objects if o.collection == "transportations"]
@@ -577,43 +795,14 @@ class TestMerge:
     ####################################################################
     #
     def test_a_merged_trip_spans_what_it_absorbs(
-        self, archive: Archive
+        self, archive: Archive, weekend_and_day: tuple[str, str]
     ) -> None:
         """
         GIVEN: a trip absorbing one that runs outside its own dates
         WHEN:  the trip record is prepared
         THEN:  its dates widen to cover both
-
-        The record doing the absorbing need not be the one that ran
-        longest -- a weekend reached the archive as a hotel booking and a
-        day trip, and the day is the record with more objects.  Left
-        alone the trip would say it lasted an afternoon.
         """
-        stage_export(
-            archive,
-            b.export(
-                b.trip(
-                    name="San Francisco, CA, July 2012",
-                    start="2012-07-06",
-                    end="2012-07-08",
-                    objects=[b.lodging()],
-                ),
-                b.trip(
-                    name="Angel Island",
-                    start="2012-07-07",
-                    end="2012-07-07",
-                    objects=[b.activity(), b.restaurant()],
-                ),
-            ),
-        )
-        keys = archive.trip_keys()
-        day = next(
-            k
-            for k in keys
-            if str(getattr(staged_trip(archive, k), "name", ""))
-            == "Angel Island"
-        )
-        weekend = next(k for k in keys if k != day)
+        weekend, day = weekend_and_day
 
         declare_merge(archive, weekend, day)
         record = staged_trip(archive, day)
@@ -655,7 +844,9 @@ class TestCorrections:
 
     ####################################################################
     #
-    def test_a_correction_reaches_what_is_sent(self, archive: Archive) -> None:
+    def test_a_correction_reaches_what_is_sent(
+        self, ferry_trip: FerryTrip
+    ) -> None:
         """
         GIVEN: a staged trip and a correction against one of its objects
         WHEN:  the trip is planned
@@ -665,33 +856,20 @@ class TestCorrections:
         never carried -- the address of a ferry pier -- belongs in it
         rather than being repaired in Tripsy afterwards.
         """
-        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
-        trip_key = archive.trip_keys()[0]
-        report = json.loads(
-            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
-        )
-        uuid = next(
-            u
-            for u, e in report["index"].items()
-            if e["collection"] == "transportations"
-        )
-
-        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
-        overrides.correct(
-            uuid,
+        ferry_trip.correct(
             departure_address="Sakurajima Port, Kagoshima, Japan",
             name="Sakurajima Port to Kagoshima Port",
         )
-        save_overrides(archive, overrides)
 
-        plan = plan_trip(archive, trip_key)
+        plan = plan_trip(ferry_trip.archive, ferry_trip.key)
+
         leg = next(o for o in plan.objects if o.collection == "transportations")
         check.equal(leg.name, "Sakurajima Port to Kagoshima Port")
 
     ####################################################################
     #
     def test_a_trip_with_no_corrections_is_unchanged(
-        self, archive: Archive
+        self, ferry_trip: FerryTrip
     ) -> None:
         """
         GIVEN: a staged trip nobody has corrected
@@ -701,13 +879,11 @@ class TestCorrections:
         Most trips carry no correction at all, so the common path has to
         cost nothing and change nothing.
         """
-        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
-        trip_key = archive.trip_keys()[0]
+        check.equal(corrections(ferry_trip.archive, ferry_trip.key), {})
 
-        check.equal(corrections(archive, trip_key), {})
         leg = next(
             o
-            for o in plan_trip(archive, trip_key).objects
+            for o in plan_trip(ferry_trip.archive, ferry_trip.key).objects
             if o.collection == "transportations"
         )
         check.equal(leg.name, "Example Ferry", "the carrier, as parsed")
@@ -715,7 +891,7 @@ class TestCorrections:
     ####################################################################
     #
     def test_a_correction_survives_a_change_of_namespace(
-        self, archive: Archive
+        self, ferry_trip: FerryTrip
     ) -> None:
         """
         GIVEN: a correction made against a trip staged one way
@@ -727,21 +903,14 @@ class TestCorrections:
         uuids, and a correction made during one has to apply to the real
         run too.
         """
-        document = b.export(b.trip(objects=[b.ferry()]))
-        stage_export(archive, document)
-        first = archive.trip_keys()[0]
-        report = json.loads(
-            (archive.trip_dir(first) / REPORT_FILENAME).read_text()
+        ferry_trip.correct(name="corrected")
+
+        ferry_trip.stage_again("scratch-abcd1234")
+        scratch = next(
+            key for key in ferry_trip.archive.trip_keys() if "scratch" in key
         )
-        uuid = next(iter(report["index"]))
-        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
-        overrides.correct(uuid, name="corrected")
-        save_overrides(archive, overrides)
 
-        stage_export(archive, document, "scratch-abcd1234")
-        scratch = next(k for k in archive.trip_keys() if "scratch" in k)
-
-        found = corrections(archive, scratch)
+        found = corrections(ferry_trip.archive, scratch)
         check.equal(len(found), 1, "reached the scratch copy too")
         check.is_in("corrected", [o.fields.get("name") for o in found.values()])
 
@@ -754,22 +923,8 @@ class TestAdditions:
 
     ####################################################################
     #
-    def added_trip(self, archive: Archive, **fields: Any) -> str:
-        """Stage one ferry trip and add an object to it.  Returns its key."""
-        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
-        trip_key = archive.trip_keys()[0]
-        report = json.loads(
-            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
-        )
-        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
-        overrides.add("a1", "transportations", **fields)
-        save_overrides(archive, overrides)
-        return trip_key
-
-    ####################################################################
-    #
     def test_an_addition_is_uploaded_and_numbered_with_the_trip(
-        self, archive: Archive
+        self, ferry_trip: FerryTrip
     ) -> None:
         """
         GIVEN: a staged trip and an object added to it by hand, timed
@@ -782,14 +937,13 @@ class TestAdditions:
         numbered with everything else, or it would land at the end of the
         trip among the objects carrying no time at all.
         """
-        trip_key = self.added_trip(
-            archive,
+        ferry_trip.add(
             name="the shuttle",
             transportation_type="transfer",
             departure_at="2024-05-02T23:00:00Z",
         )
 
-        plan = plan_trip(archive, trip_key)
+        plan = plan_trip(ferry_trip.archive, ferry_trip.key)
 
         check.equal(len(plan.objects), 2, "the ferry and the addition")
         check.equal(plan.objects[0].name, "the shuttle")
@@ -798,7 +952,7 @@ class TestAdditions:
     ####################################################################
     #
     def test_an_addition_is_minted_into_the_trip_s_namespace(
-        self, archive: Archive
+        self, ferry_trip: FerryTrip
     ) -> None:
         """
         GIVEN: an addition to a trip staged under the parser's namespace
@@ -808,12 +962,12 @@ class TestAdditions:
         An archive is self-describing: nothing has to tell an addition
         which run it belongs to.
         """
-        trip_key = self.added_trip(archive, name="the shuttle")
+        ferry_trip.add(name="the shuttle")
 
-        trip = staged_trip(archive, trip_key)
+        trip = staged_trip(ferry_trip.archive, ferry_trip.key)
         assert trip is not None
-        once = added(archive, trip_key)[0]
-        twice = added(archive, trip_key)[0]
+        once = added(ferry_trip.archive, ferry_trip.key)[0]
+        twice = added(ferry_trip.archive, ferry_trip.key)[0]
 
         check.equal(once.internal_identifier, twice.internal_identifier)
         check.equal(
@@ -823,7 +977,9 @@ class TestAdditions:
 
     ####################################################################
     #
-    def test_an_addition_survives_re_staging(self, archive: Archive) -> None:
+    def test_an_addition_survives_re_staging(
+        self, ferry_trip: FerryTrip
+    ) -> None:
         """
         GIVEN: an addition to a trip whose export is staged again
         WHEN:  the trip is planned
@@ -833,25 +989,20 @@ class TestAdditions:
         never produces an addition.  Living outside the trip directory is
         what keeps one.
         """
-        document = b.export(b.trip(objects=[b.ferry()]))
-        stage_export(archive, document)
-        trip_key = archive.trip_keys()[0]
-        report = json.loads(
-            (archive.trip_dir(trip_key) / REPORT_FILENAME).read_text()
-        )
-        overrides = OverrideSet(trip_uuid=report["trip_uuid"])
-        overrides.add("a1", "transportations", name="the shuttle")
-        save_overrides(archive, overrides)
+        ferry_trip.add(name="the shuttle")
 
-        stage_export(archive, document)
+        ferry_trip.stage_again()
 
-        names = [o.name for o in plan_trip(archive, trip_key).objects]
+        names = [
+            o.name
+            for o in plan_trip(ferry_trip.archive, ferry_trip.key).objects
+        ]
         check.is_in("the shuttle", names)
 
     ####################################################################
     #
     def test_a_trip_with_no_additions_gains_nothing(
-        self, archive: Archive
+        self, ferry_trip: FerryTrip
     ) -> None:
         """
         GIVEN: a staged trip nobody has added to
@@ -861,9 +1012,7 @@ class TestAdditions:
         Almost every trip is this one, so the common path has to cost
         nothing.
         """
-        stage_export(archive, b.export(b.trip(objects=[b.ferry()])))
-
-        check.equal(added(archive, archive.trip_keys()[0]), [])
+        check.equal(added(ferry_trip.archive, ferry_trip.key), [])
 
 
 ########################################################################
@@ -875,17 +1024,18 @@ class TestVerify:
     ####################################################################
     #
     def test_a_trip_uploaded_whole_agrees_with_its_plan(
-        self, staged: Archive, api_client: TripsyClient
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: a trip uploaded in full
         WHEN:  it is read back and compared
         THEN:  nothing is missing, nothing differs
         """
-        trip_key = only_key(staged)
-        upload_trip(api_client, staged, trip_key)
-
-        result = verify_trip(api_client, staged, trip_key)
+        result = verify_trip(api_client, staged, staged_key)
 
         check.is_true(result.agrees)
         check.equal(result.missing, [])
@@ -895,7 +1045,7 @@ class TestVerify:
     ####################################################################
     #
     def test_a_trip_never_uploaded_reads_as_wholly_missing(
-        self, staged: Archive, api_client: TripsyClient
+        self, staged: Archive, staged_key: str, api_client: TripsyClient
     ) -> None:
         """
         GIVEN: a staged trip nothing has uploaded
@@ -905,10 +1055,9 @@ class TestVerify:
         Rather than an error: 'none of it is there' is an answer, and it
         is the answer after a run that failed before it started.
         """
-        trip_key = only_key(staged)
-        plan = plan_trip(staged, trip_key)
+        plan = plan_trip(staged, staged_key)
 
-        result = verify_trip(api_client, staged, trip_key)
+        result = verify_trip(api_client, staged, staged_key)
 
         check.is_none(result.trip_id)
         check.equal(len(result.missing), plan.total)
@@ -917,7 +1066,11 @@ class TestVerify:
     ####################################################################
     #
     def test_an_object_deleted_in_the_app_reads_as_missing(
-        self, staged: Archive, api_client: TripsyClient, paced_tripsy: Any
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: an uploaded trip one of whose objects was then removed
@@ -927,20 +1080,17 @@ class TestVerify:
         Which is the case worth catching: the upload said it created the
         object, so nothing local knows it has gone.
         """
-        trip_key = only_key(staged)
-        result = upload_trip(api_client, staged, trip_key)
-        assert result.trip_id is not None
-
+        assert uploaded.trip_id is not None
         gone = next(
             iter(
                 child_ids_by_identifier(
-                    api_client, result.trip_id, "transportations"
+                    api_client, uploaded.trip_id, "transportations"
                 ).items()
             )
         )
-        api_client.delete_child(result.trip_id, "transportations", gone[1])
+        api_client.delete_child(uploaded.trip_id, "transportations", gone[1])
 
-        checked = verify_trip(api_client, staged, trip_key)
+        checked = verify_trip(api_client, staged, staged_key)
 
         check.equal(checked.missing, [gone[0]])
         check.is_false(checked.agrees)
@@ -948,7 +1098,11 @@ class TestVerify:
     ####################################################################
     #
     def test_an_object_added_in_the_app_is_reported_not_missed(
-        self, staged: Archive, api_client: TripsyClient
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
     ) -> None:
         """
         GIVEN: an uploaded trip that gained an object in the app
@@ -958,16 +1112,14 @@ class TestVerify:
         Editing in the app is the point of the import, so an object the
         plan does not know about is news rather than a fault.
         """
-        trip_key = only_key(staged)
-        result = upload_trip(api_client, staged, trip_key)
-        assert result.trip_id is not None
+        assert uploaded.trip_id is not None
         api_client.create_child(
-            result.trip_id,
+            uploaded.trip_id,
             "activities",
             {"name": "added in the app", "internal_identifier": "app-1"},
         )
 
-        checked = verify_trip(api_client, staged, trip_key)
+        checked = verify_trip(api_client, staged, staged_key)
 
         check.equal(checked.extra, ["app-1"])
         check.equal(
@@ -987,7 +1139,7 @@ class TestUnplaced:
     ####################################################################
     #
     def test_both_ends_of_a_leg_are_looked_at(
-        self, staged: Archive, api_client: TripsyClient
+        self, api_client: TripsyClient, uploaded: TripImport
     ) -> None:
         """
         GIVEN: an uploaded trip whose legs carry addresses and no position
@@ -997,11 +1149,9 @@ class TestUnplaced:
         A leg is two places, and each is looked up separately: a ferry
         crossing has a port at either side.
         """
-        trip_key = only_key(staged)
-        result = upload_trip(api_client, staged, trip_key)
-        assert result.trip_id is not None
+        assert uploaded.trip_id is not None
 
-        found = unplaced_in(api_client, result.trip_id)
+        found = unplaced_in(api_client, uploaded.trip_id)
 
         legs = [row for row in found if row.collection == "transportations"]
         check.is_true(legs, "the fixture has addressed legs")
@@ -1014,7 +1164,7 @@ class TestUnplaced:
     ####################################################################
     #
     def test_placing_an_endpoint_moves_it_from_wanted_to_reference(
-        self, staged: Archive, api_client: TripsyClient
+        self, api_client: TripsyClient, uploaded: TripImport
     ) -> None:
         """
         GIVEN: an uploaded trip, one of whose endpoints is given a position
@@ -1025,17 +1175,15 @@ class TestUnplaced:
         still missing rather than assuming anything, and what it has
         already placed is what a new answer gets measured against.
         """
-        trip_key = only_key(staged)
-        result = upload_trip(api_client, staged, trip_key)
-        assert result.trip_id is not None
-        before = unplaced_in(api_client, result.trip_id)
-        placed_before = positions_in(api_client, result.trip_id)
+        assert uploaded.trip_id is not None
+        before = unplaced_in(api_client, uploaded.trip_id)
+        placed_before = positions_in(api_client, uploaded.trip_id)
         target = next(
             row for row in before if row.collection == "transportations"
         )
 
         api_client.update_child(
-            result.trip_id,
+            uploaded.trip_id,
             target.collection,
             target.child_id,
             {
@@ -1044,12 +1192,12 @@ class TestUnplaced:
             },
         )
 
-        after = unplaced_in(api_client, result.trip_id)
+        after = unplaced_in(api_client, uploaded.trip_id)
         gone = {(r.child_id, r.prefix) for r in before} - {
             (r.child_id, r.prefix) for r in after
         }
         check.equal(gone, {(target.child_id, target.prefix)})
-        placed_after = positions_in(api_client, result.trip_id)
+        placed_after = positions_in(api_client, uploaded.trip_id)
         check.is_in((1.5, 2.5), placed_after)
         check.equal(
             len(placed_after),
