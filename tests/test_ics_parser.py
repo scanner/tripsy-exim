@@ -12,6 +12,7 @@ objects.
 """
 
 # system imports
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 # 3rd party imports
@@ -38,14 +39,6 @@ from tripsy_exim.sources.timezones import zone_for
 
 TOKYO = ("Asia/Tokyo", 35.6812, 139.7671)
 NEW_YORK = ("America/New_York", 40.7128, -74.0060)
-
-
-####################################################################
-#
-def calendar_text(faker: Faker, **kwargs: object) -> str:
-    """Synthetic .ics text with the defects a test asks for."""
-    built = ics_builder.build_calendar(faker, **kwargs)  # type: ignore[arg-type]
-    return ics_builder.to_ics(built)
 
 
 ########################################################################
@@ -98,7 +91,7 @@ class TestIdentifiers:
     ####################################################################
     #
     def test_an_identifier_is_derived_from_the_uuid_and_stays_put(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: the same calendar parsed twice
@@ -108,7 +101,7 @@ class TestIdentifiers:
                a re-run is a no-op and any other source keyed on that
                uuid corrects this object instead of duplicating it
         """
-        text = calendar_text(faker, items=4)
+        text = ics_calendar(items=4)
 
         first = parse(text)
         second = parse(text)
@@ -235,7 +228,7 @@ class TestClassification:
     ####################################################################
     #
     def test_events_reach_the_right_collections_and_guesses_are_listed(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar with lodging and flight events among others
@@ -247,7 +240,7 @@ class TestClassification:
                before the import runs
         """
         parsed = parse(
-            calendar_text(faker, items=6, lodging=2, flights=1, landmark=TOKYO)
+            ics_calendar(items=6, lodging=2, flights=1, landmark=TOKYO)
         )
 
         check.equal(len(parsed.hostings), 2, "lodging")
@@ -261,7 +254,9 @@ class TestClassification:
 
     ####################################################################
     #
-    def test_a_flight_places_its_geo_at_the_arrival(self, faker: Faker) -> None:
+    def test_a_flight_places_its_geo_at_the_arrival(
+        self, ics_calendar: Callable[..., str]
+    ) -> None:
         """
         GIVEN: a flight event with one LOCATION and one GEO
         WHEN:  it becomes a transportation
@@ -279,7 +274,7 @@ class TestClassification:
         places a leg within a few tens of kilometres and no closer.  The
         instants are unaffected either way: TripIt writes them in UTC.
         """
-        parsed = parse(calendar_text(faker, items=1, flights=1, landmark=TOKYO))
+        parsed = parse(ics_calendar(items=1, flights=1, landmark=TOKYO))
         leg = parsed.transportations[0]
 
         check.equal(leg.transportation_type, "airplane", "typed")
@@ -333,7 +328,7 @@ class TestTimezones:
     )
     def test_a_zone_is_derived_inherited_or_honestly_absent(
         self,
-        faker: Faker,
+        ics_calendar: Callable[..., str],
         kwargs: dict[str, object],
         expected: list[tuple[str | None, str]],
     ) -> None:
@@ -344,7 +339,7 @@ class TestTimezones:
                nearest neighbour where it does not, and left absent when
                the file holds none -- each marked with which it was
         """
-        parsed = parse(calendar_text(faker, **kwargs))
+        parsed = parse(ics_calendar(**kwargs))
 
         check.equal(
             [(n.timezone, n.timezone_source) for n in parsed.notes],
@@ -412,7 +407,7 @@ class TestTimeForms:
     )
     def test_every_date_form_lands_on_the_right_utc_instant(
         self,
-        faker: Faker,
+        ics_calendar: Callable[..., str],
         kwargs: dict[str, object],
         expected: datetime,
         all_day: bool,
@@ -424,7 +419,7 @@ class TestTimeForms:
                the zone derived for it, and is flagged all-day only when
                the source was date-only
         """
-        parsed = parse(calendar_text(faker, items=1, **kwargs))
+        parsed = parse(ics_calendar(items=1, **kwargs))
         activity = parsed.activities[0]
 
         check.equal(activity.starts_at, expected, "instant")
@@ -440,7 +435,7 @@ class TestTripEnvelope:
     ####################################################################
     #
     def test_the_trip_takes_its_name_and_span_from_the_calendar(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar with X-WR- metadata and a trip-level event
@@ -449,8 +444,8 @@ class TestTripEnvelope:
                trip-level event, as plain dates needing no zone
         """
         parsed = parse(
-            calendar_text(
-                faker, items=4, start=date(2027, 6, 1), name="Kyoto, May 2027"
+            ics_calendar(
+                items=4, start=date(2027, 6, 1), name="Kyoto, May 2027"
             )
         )
 
@@ -473,7 +468,7 @@ class TestTripEnvelope:
     ####################################################################
     #
     def test_the_trip_level_event_is_not_imported_as_a_child(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar whose first event is the trip itself
@@ -481,7 +476,7 @@ class TestTripEnvelope:
         THEN:  only the item events become child objects, or every trip
                would carry a duplicate of itself as an activity
         """
-        parsed = parse(calendar_text(faker, items=3))
+        parsed = parse(ics_calendar(items=3))
 
         total = (
             len(parsed.hostings)
@@ -567,15 +562,15 @@ class TestPassthrough:
 
     ####################################################################
     #
-    def test_non_ascii_text_survives_a_round_trip(self, faker: Faker) -> None:
+    def test_non_ascii_text_survives_a_round_trip(
+        self, ics_calendar: Callable[..., str]
+    ) -> None:
         """
         GIVEN: an event whose text is non-ASCII, as real ones are
         WHEN:  it is parsed
         THEN:  the characters arrive intact rather than mangled
         """
-        parsed = parse(
-            calendar_text(faker, items=1, non_ascii=1, landmark=TOKYO)
-        )
+        parsed = parse(ics_calendar(items=1, non_ascii=1, landmark=TOKYO))
         activity = parsed.activities[0]
 
         assert any(
@@ -647,7 +642,10 @@ class TestFieldsWithNoHomeOnTheModel:
         ],
     )
     def test_all_day_survives_on_a_model_that_cannot_express_it(
-        self, faker: Faker, kwargs: dict[str, int], collection: str
+        self,
+        ics_calendar: Callable[..., str],
+        kwargs: dict[str, int],
+        collection: str,
     ) -> None:
         """
         GIVEN: a date-only event that classifies as lodging or a flight
@@ -657,7 +655,7 @@ class TestFieldsWithNoHomeOnTheModel:
                silent
         """
         parsed = parse(
-            calendar_text(faker, items=1, date_only=1, landmark=TOKYO, **kwargs)
+            ics_calendar(items=1, date_only=1, landmark=TOKYO, **kwargs)
         )
         built = getattr(parsed, collection)[0]
 
@@ -687,7 +685,7 @@ class TestFieldsWithNoHomeOnTheModel:
     ####################################################################
     #
     def test_an_unloadable_zone_is_reported_rather_than_hidden(
-        self, faker: Faker, mocker: MockerFixture
+        self, ics_calendar: Callable[..., str], mocker: MockerFixture
     ) -> None:
         """
         GIVEN: coordinates that derive a zone the machine cannot load,
@@ -700,9 +698,7 @@ class TestFieldsWithNoHomeOnTheModel:
         """
         mocker.patch("tripsy_exim.sources.ics._zoneinfo", return_value=None)
 
-        parsed = parse(
-            calendar_text(faker, items=1, floating=1, landmark=TOKYO)
-        )
+        parsed = parse(ics_calendar(items=1, floating=1, landmark=TOKYO))
         note = parsed.notes[0]
 
         check.equal(note.timezone, "Asia/Tokyo", "the name was derived")

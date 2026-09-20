@@ -3,16 +3,14 @@
 """Test the throwaway identifier namespace."""
 
 # system imports
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 # 3rd party imports
 import pytest
 import pytest_check as check
-from faker import Faker
 
 # Project imports
-from tests.ics_builder import build_calendar, to_ics
 from tripsy_exim.models import (
     IDENTIFIER_PREFIX,
     is_minted,
@@ -23,13 +21,6 @@ from tripsy_exim.models import (
 from tripsy_exim.sources import parse
 from tripsy_exim.store import Archive, local_key
 from tripsy_exim.sync import stage
-
-
-####################################################################
-#
-def calendar_text(faker: Faker, **kwargs: Any) -> str:
-    """One synthetic calendar, as a .ics document."""
-    return to_ics(build_calendar(faker, **kwargs))
 
 
 ########################################################################
@@ -126,7 +117,7 @@ class TestScratchStaging:
     ####################################################################
     #
     def test_keys_survive_being_filenames(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar staged under a scratch namespace
@@ -137,7 +128,7 @@ class TestScratchStaging:
         key has to be the identifier and not a sanitised version of it.
         """
         archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, items=3), scratch_namespace("run1"))
+        parsed = parse(ics_calendar(items=3), scratch_namespace("run1"))
 
         staged = stage(archive, parsed)
 
@@ -149,7 +140,7 @@ class TestScratchStaging:
     ####################################################################
     #
     def test_a_run_can_be_found_by_prefix(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: one real staging run and two scratch runs
@@ -157,7 +148,7 @@ class TestScratchStaging:
         THEN:  each run's trips are found without touching the others
         """
         archive = Archive(tmp_path)
-        text = calendar_text(faker, items=3)
+        text = ics_calendar(items=3)
 
         stage(archive, parse(text))
         stage(archive, parse(text, scratch_namespace("runa")))

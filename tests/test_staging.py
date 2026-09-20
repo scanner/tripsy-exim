@@ -4,17 +4,16 @@
 
 # system imports
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 # 3rd party imports
 import pytest
 import pytest_check as check
-from faker import Faker
 
 # Project imports
 from tests import tripit_builder
-from tests.ics_builder import build_calendar, to_ics
 from tripsy_exim.sources import parse
 from tripsy_exim.sources.join import SEPARATOR
 from tripsy_exim.store import Archive
@@ -27,13 +26,6 @@ from tripsy_exim.sync import (
     stage_export_file,
     stage_file,
 )
-
-
-####################################################################
-#
-def calendar_text(faker: Faker, **kwargs: Any) -> str:
-    """One synthetic calendar, as a .ics document."""
-    return to_ics(build_calendar(faker, **kwargs))
 
 
 ########################################################################
@@ -59,7 +51,7 @@ class TestStage:
     def test_children_land_in_their_collection(
         self,
         tmp_path: Path,
-        faker: Faker,
+        ics_calendar: Callable[..., str],
         kwargs: dict[str, int],
         collection: str,
     ) -> None:
@@ -69,7 +61,7 @@ class TestStage:
         THEN:  that collection holds a file per event
         """
         archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, **kwargs))
+        parsed = parse(ics_calendar(**kwargs))
 
         staged = stage(archive, parsed)
 
@@ -80,7 +72,7 @@ class TestStage:
     ####################################################################
     #
     def test_one_calendar_lands_as_one_trip(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a parsed calendar of mixed event kinds
@@ -93,7 +85,7 @@ class TestStage:
         children and not the trip.
         """
         archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, items=6, lodging=2, flights=2))
+        parsed = parse(ics_calendar(items=6, lodging=2, flights=2))
 
         staged = stage(archive, parsed)
 
@@ -119,7 +111,7 @@ class TestStage:
     ####################################################################
     #
     def test_staging_twice_does_not_duplicate(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar already staged
@@ -130,7 +122,7 @@ class TestStage:
         same text keys onto the same paths.
         """
         archive = Archive(tmp_path)
-        text = calendar_text(faker, items=5, lodging=2)
+        text = ics_calendar(items=5, lodging=2)
 
         stage(archive, parse(text))
         before = sorted(p.name for p in tmp_path.rglob("*.json"))
@@ -142,7 +134,7 @@ class TestStage:
     ####################################################################
     #
     def test_report_records_what_the_parser_could_not_do(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar whose events match no classification rule
@@ -150,7 +142,7 @@ class TestStage:
         THEN:  report.json lists them as unclassified
         """
         archive = Archive(tmp_path)
-        parsed = parse(calendar_text(faker, items=4))
+        parsed = parse(ics_calendar(items=4))
 
         staged = stage(archive, parsed)
 
@@ -169,14 +161,16 @@ class TestStageFile:
 
     ####################################################################
     #
-    def test_reads_the_file(self, tmp_path: Path, faker: Faker) -> None:
+    def test_reads_the_file(
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
+    ) -> None:
         """
         GIVEN: a .ics file on disk
         WHEN:  it is staged
         THEN:  its trip and children are archived
         """
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3))
+        source.write_text(ics_calendar(items=3))
         archive = Archive(tmp_path / "archive")
 
         staged = stage_file(archive, source)
@@ -187,7 +181,7 @@ class TestStageFile:
     ####################################################################
     #
     def test_namespace_gives_a_separate_key_space(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: one .ics file staged under the default namespace
@@ -198,7 +192,7 @@ class TestStageFile:
         never releases one once it has been used.
         """
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3))
+        source.write_text(ics_calendar(items=3))
         archive = Archive(tmp_path / "archive")
 
         real = stage_file(archive, source)
@@ -217,7 +211,9 @@ class TestStageExport:
 
     ####################################################################
     #
-    def test_every_trip_is_staged(self, tmp_path: Path, faker: Faker) -> None:
+    def test_every_trip_is_staged(
+        self, tmp_path: Path, tripit_export: Callable[..., dict[str, Any]]
+    ) -> None:
         """
         GIVEN: an export holding several trips
         WHEN:  it is staged
@@ -226,7 +222,7 @@ class TestStageExport:
         An export is a whole account, where a .ics file is one trip.
         """
         archive = Archive(tmp_path)
-        document = tripit_builder.random_export(faker, trips=4)
+        document = tripit_export(trips=4)
 
         staged = stage_export(archive, document)
 
@@ -240,7 +236,7 @@ class TestStageExport:
     ####################################################################
     #
     def test_children_land_under_their_own_trip(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, tripit_export: Callable[..., dict[str, Any]]
     ) -> None:
         """
         GIVEN: an export of several trips
@@ -249,7 +245,7 @@ class TestStageExport:
         """
         archive = Archive(tmp_path)
 
-        staged = stage_export(archive, tripit_builder.random_export(faker))
+        staged = stage_export(archive, tripit_export())
 
         for one in staged:
             written = sum(
@@ -264,7 +260,7 @@ class TestStageExport:
     ####################################################################
     #
     def test_namespace_gives_a_separate_key_space(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, tripit_export: Callable[..., dict[str, Any]]
     ) -> None:
         """
         GIVEN: one export staged into the real and a scratch namespace
@@ -272,7 +268,7 @@ class TestStageExport:
         THEN:  they share none, so a shaping run spends no real identifier
         """
         archive = Archive(tmp_path)
-        document = tripit_builder.random_export(faker, trips=2)
+        document = tripit_export(trips=2)
 
         real = stage_export(archive, document)
         scratch = stage_export(archive, document, "scratch-xyz")
@@ -281,7 +277,9 @@ class TestStageExport:
 
     ####################################################################
     #
-    def test_reads_the_file(self, tmp_path: Path, faker: Faker) -> None:
+    def test_reads_the_file(
+        self, tmp_path: Path, tripit_export: Callable[..., dict[str, Any]]
+    ) -> None:
         """
         GIVEN: an export written to disk, TripIt's encoding and all
         WHEN:  it is staged from its path
@@ -290,7 +288,7 @@ class TestStageExport:
         archive = Archive(tmp_path / "archive")
         path = tmp_path / "export.json"
         path.write_text(
-            json.dumps(tripit_builder.random_export(faker, trips=2)),
+            json.dumps(tripit_export(trips=2)),
             encoding="utf-8",
         )
 
@@ -330,7 +328,7 @@ class TestTheExportIsAuthoritative:
     ####################################################################
     #
     def test_a_calendar_for_an_archived_trip_is_refused(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a trip staged from the export
@@ -339,7 +337,7 @@ class TestTheExportIsAuthoritative:
         """
         archive = Archive(tmp_path / "archive")
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3, name="Osaka 2027"))
+        source.write_text(ics_calendar(items=3, name="Osaka 2027"))
         stage_export(archive, self.matching_export(source))
 
         with pytest.raises(TripAlreadyArchived) as raised:
@@ -351,7 +349,10 @@ class TestTheExportIsAuthoritative:
     ####################################################################
     #
     def test_a_calendar_for_an_unknown_trip_still_stages(
-        self, tmp_path: Path, faker: Faker
+        self,
+        tmp_path: Path,
+        ics_calendar: Callable[..., str],
+        tripit_export: Callable[..., dict[str, Any]],
     ) -> None:
         """
         GIVEN: an archive holding a different trip
@@ -363,8 +364,8 @@ class TestTheExportIsAuthoritative:
         """
         archive = Archive(tmp_path / "archive")
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3, name="Osaka 2027"))
-        stage_export(archive, tripit_builder.random_export(faker, trips=1))
+        source.write_text(ics_calendar(items=3, name="Osaka 2027"))
+        stage_export(archive, tripit_export(trips=1))
 
         staged = stage_file(archive, source)
 
@@ -374,7 +375,7 @@ class TestTheExportIsAuthoritative:
     ####################################################################
     #
     def test_an_ambiguous_match_is_refused_rather_than_guessed(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: two archived trips sharing one name and one span
@@ -387,7 +388,7 @@ class TestTheExportIsAuthoritative:
         """
         archive = Archive(tmp_path / "archive")
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3, name="Twice Over"))
+        source.write_text(ics_calendar(items=3, name="Twice Over"))
         document = self.matching_export(source)
 
         # The same trip twice over, as the export really does carry it.
@@ -403,7 +404,7 @@ class TestTheExportIsAuthoritative:
     ####################################################################
     #
     def test_a_shaping_run_is_exempt(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a trip already staged from the export
@@ -415,7 +416,7 @@ class TestTheExportIsAuthoritative:
         """
         archive = Archive(tmp_path / "archive")
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3, name="Osaka 2027"))
+        source.write_text(ics_calendar(items=3, name="Osaka 2027"))
         stage_export(archive, self.matching_export(source))
 
         staged = stage_file(archive, source, namespace="scratch-run1")
@@ -425,7 +426,7 @@ class TestTheExportIsAuthoritative:
     ####################################################################
     #
     def test_a_throwaway_trip_blocks_nothing(
-        self, tmp_path: Path, faker: Faker
+        self, tmp_path: Path, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a trip staged only under a throwaway namespace
@@ -434,7 +435,7 @@ class TestTheExportIsAuthoritative:
         """
         archive = Archive(tmp_path / "archive")
         source = tmp_path / "trip.ics"
-        source.write_text(calendar_text(faker, items=3, name="Osaka 2027"))
+        source.write_text(ics_calendar(items=3, name="Osaka 2027"))
         stage_file(archive, source, namespace="scratch-run1")
 
         staged = stage_file(archive, source)
