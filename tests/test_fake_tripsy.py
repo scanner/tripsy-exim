@@ -20,16 +20,9 @@ import pytest
 import pytest_check as check
 
 # Project imports
-from tests.fake_tripsy import BASE, PAGE_SIZE, FakeTripsy, transport
+from tests.fake_tripsy import PAGE_SIZE, FakeTripsy
 from tripsy_exim.models import Hosting, Trip
 from tripsy_exim.store import Archive
-
-
-####################################################################
-#
-def client_for(store: FakeTripsy) -> httpx.Client:
-    """An httpx client wired to a particular store."""
-    return httpx.Client(base_url=BASE, transport=transport(store))
 
 
 ########################################################################
@@ -64,7 +57,7 @@ class TestEnvelopes:
     ####################################################################
     #
     def test_pagination_triggers_at_the_real_trip_size(
-        self, fake_tripsy: FakeTripsy
+        self, fake_tripsy: FakeTripsy, tripsy_client: httpx.Client
     ) -> None:
         """
         GIVEN: a trip with 121 children, the largest in the real export
@@ -79,11 +72,10 @@ class TestEnvelopes:
                 trip["id"], "activities", name=f"Activity {index}"
             )
 
-        with client_for(fake_tripsy) as client:
-            first = client.get(f"/v2/trip/{trip['id']}/activities").json()
-            second = client.get(
-                f"/v2/trip/{trip['id']}/activities", params={"page": 2}
-            ).json()
+        first = tripsy_client.get(f"/v2/trip/{trip['id']}/activities").json()
+        second = tripsy_client.get(
+            f"/v2/trip/{trip['id']}/activities", params={"page": 2}
+        ).json()
 
         check.equal(first["count"], 121, "count is the total, not the page")
         check.equal(len(first["results"]), PAGE_SIZE, "first page full")
@@ -269,7 +261,11 @@ class TestUpdatedSince:
         ],
     )
     def test_the_two_day_cushion_is_applied(
-        self, fake_tripsy: FakeTripsy, offset_days: int, expected: int
+        self,
+        fake_tripsy: FakeTripsy,
+        tripsy_client: httpx.Client,
+        offset_days: int,
+        expected: int,
     ) -> None:
         """
         GIVEN: a trip modified now
@@ -281,17 +277,16 @@ class TestUpdatedSince:
         future = fake_tripsy.now + timedelta(days=offset_days)
         since = future.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        with client_for(fake_tripsy) as client:
-            body = client.get(
-                "/v2/trips", params={"updatedSince": since}
-            ).json()
+        body = tripsy_client.get(
+            "/v2/trips", params={"updatedSince": since}
+        ).json()
 
         assert body["count"] == expected
 
     ####################################################################
     #
     def test_a_nested_write_bumps_the_parent_trip(
-        self, fake_tripsy: FakeTripsy
+        self, fake_tripsy: FakeTripsy, tripsy_client: httpx.Client
     ) -> None:
         """
         GIVEN: a trip untouched for a week whose hosting is then edited
@@ -305,10 +300,9 @@ class TestUpdatedSince:
         fake_tripsy.advance(days=1)
         fake_tripsy.seed_child(trip["id"], "hostings", name="Lodging")
 
-        with client_for(fake_tripsy) as client:
-            body = client.get(
-                "/v2/trips", params={"updatedSince": watermark}
-            ).json()
+        body = tripsy_client.get(
+            "/v2/trips", params={"updatedSince": watermark}
+        ).json()
 
         assert body["count"] == 1
 
@@ -352,7 +346,9 @@ class TestPermissionsAndFields:
     ####################################################################
     #
     def test_expenses_are_withheld_without_permission(
-        self, restricted_tripsy: FakeTripsy
+        self,
+        restricted_tripsy: FakeTripsy,
+        restricted_client: httpx.Client,
     ) -> None:
         """
         GIVEN: a caller who cannot see expenses
@@ -365,8 +361,7 @@ class TestPermissionsAndFields:
             trip["id"], "hostings", name="Lodging", price=78.5, currency="EUR"
         )
 
-        with client_for(restricted_tripsy) as client:
-            body = client.get(f"/v2/trip/{trip['id']}/hostings").json()
+        body = restricted_client.get(f"/v2/trip/{trip['id']}/hostings").json()
 
         hosting = body["results"][0]
         check.is_not_in("price", hosting, "price withheld")
@@ -428,7 +423,10 @@ class TestPartialFetchesAgainstTheArchive:
     ####################################################################
     #
     def test_a_lean_fetch_then_a_full_one_loses_nothing(
-        self, fake_tripsy: FakeTripsy, archive: Archive
+        self,
+        fake_tripsy: FakeTripsy,
+        tripsy_client: httpx.Client,
+        archive: Archive,
     ) -> None:
         """
         GIVEN: a trip archived from a fields= response carrying two fields
@@ -442,14 +440,13 @@ class TestPartialFetchesAgainstTheArchive:
             description="Synthetic",
         )
 
-        with client_for(fake_tripsy) as client:
-            lean = client.get(
-                "/v1/trips", params={"fields": "id,internal_identifier"}
-            ).json()["results"][0]
-            archive.ingest(Trip, lean)
+        lean = tripsy_client.get(
+            "/v1/trips", params={"fields": "id,internal_identifier"}
+        ).json()["results"][0]
+        archive.ingest(Trip, lean)
 
-            full = client.get(f"/v1/trips/{seeded['id']}").json()
-            archive.ingest(Trip, full)
+        full = tripsy_client.get(f"/v1/trips/{seeded['id']}").json()
+        archive.ingest(Trip, full)
 
         stored = archive.read(
             Trip, archive.trip_dir("txim-ics-abcdef") / "trip.json"
@@ -463,17 +460,23 @@ class TestPartialFetchesAgainstTheArchive:
     ####################################################################
     #
     def test_a_restricted_fetch_cannot_erase_an_archived_price(
-        self, archive: Archive
+        self,
+        fake_tripsy: FakeTripsy,
+        tripsy_client: httpx.Client,
+        archive: Archive,
     ) -> None:
         """
         GIVEN: a hosting archived with a price
         WHEN:  a later export by a caller without expense permission runs
         THEN:  the archived price survives, because the field is absent
                rather than null
+
+        One store and one client throughout: the permission is read when
+        a response is built, so flipping it is what a second export by a
+        poorer-sighted caller looks like.
         """
-        full = FakeTripsy()
-        trip = full.seed_trip(name="T")
-        full.seed_child(
+        trip = fake_tripsy.seed_trip(name="T")
+        fake_tripsy.seed_child(
             trip["id"],
             "hostings",
             internal_identifier="txim-ics-h1",
@@ -481,17 +484,14 @@ class TestPartialFetchesAgainstTheArchive:
             price=78.5,
             currency="EUR",
         )
-        with client_for(full) as client:
-            body = client.get(f"/v2/trip/{trip['id']}/hostings").json()
-            archive.ingest(Hosting, body["results"][0], trip_key="t")
+        body = tripsy_client.get(f"/v2/trip/{trip['id']}/hostings").json()
+        archive.ingest(Hosting, body["results"][0], trip_key="t")
 
-        # The same store, now seen by a caller who cannot see expenses.
-        #
-        full.can_see_expenses = False
-        with client_for(full) as client:
-            body = client.get(f"/v2/trip/{trip['id']}/hostings").json()
-            restricted: dict[str, Any] = body["results"][0]
-            archive.ingest(Hosting, restricted, trip_key="t")
+        fake_tripsy.can_see_expenses = False
+
+        body = tripsy_client.get(f"/v2/trip/{trip['id']}/hostings").json()
+        restricted: dict[str, Any] = body["results"][0]
+        archive.ingest(Hosting, restricted, trip_key="t")
 
         stored = archive.read(
             Hosting, archive.trip_dir("t") / "hostings" / "txim-ics-h1.json"

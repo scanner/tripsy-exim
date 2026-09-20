@@ -245,6 +245,19 @@ def tripsy_client(fake_tripsy: FakeTripsy) -> Iterator[httpx.Client]:
 ####################################################################
 #
 @pytest.fixture
+def restricted_client(
+    restricted_tripsy: FakeTripsy,
+) -> Iterator[httpx.Client]:
+    """An httpx client wired to the fake that withholds expenses."""
+    with httpx.Client(
+        base_url=BASE, transport=transport(restricted_tripsy)
+    ) as client:
+        yield client
+
+
+####################################################################
+#
+@pytest.fixture
 def ics_calendar(faker: Faker) -> Callable[..., str]:
     """
     Build synthetic TripIt-shaped .ics text.
