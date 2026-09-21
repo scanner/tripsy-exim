@@ -40,6 +40,9 @@ from tripsy_exim.geocode import (
 # Kyoto Station, and what a geocoder answers when asked for it without a
 # locality: a point in El Dorado County, California.
 #
+# Full geocoder precision, because what is measured here is distance.
+# `test_enrich` names some of the same places more roundly.
+#
 KYOTO = (35.0116971, 135.7681616)
 IMPOSTOR = (38.69581586231335, -120.9094447761495)
 NARITA = (35.7719808, 140.3928501)

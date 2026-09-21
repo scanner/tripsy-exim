@@ -25,12 +25,13 @@ from click.testing import CliRunner
 from tests import tripit_builder as b
 from tripsy_exim.cli import main
 
-# Two trips whose names share a word and differ in another.  Both halves
-# are load-bearing: 'kyoto' has to pick one trip and 'japan' has to pick
+# Two trips whose names share a word and differ in another.  Suffixed
+# because a bare place name elsewhere in the suite is a position.
+# Both halves are load-bearing: 'kyoto' has to pick one trip and 'japan' has to pick
 # both, which is what makes one of them a match and the other ambiguous.
 #
-OSAKA = "Osaka, Japan, May 2024"
-KYOTO = "Kyoto, Japan, June 2024"
+OSAKA_TRIP = "Osaka, Japan, May 2024"
+KYOTO_TRIP = "Kyoto, Japan, June 2024"
 
 # Two trips eight months apart.  The names say which is which, so a test
 # reads its own output without working the dates out.
@@ -68,9 +69,9 @@ def write_export(tmp_path: Path) -> Callable[..., Path]:
 def named_pair() -> tuple[dict, dict]:
     """Two trips sharing a word in their names."""
     return (
-        b.trip(name=OSAKA, objects=[b.flight()]),
+        b.trip(name=OSAKA_TRIP, objects=[b.flight()]),
         b.trip(
-            name=KYOTO,
+            name=KYOTO_TRIP,
             start="2024-06-01",
             end="2024-06-04",
             objects=[b.lodging()],

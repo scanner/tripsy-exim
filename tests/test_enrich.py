@@ -35,6 +35,10 @@ from tripsy_exim.sync import DIVERGENCE_KM, enrich
 # between: an airport against the city a calendar names for it, and a
 # mismatch no distance explains.
 #
+# This module's own reference points, to the precision matching by
+# instant needs.  `test_geocode` names some of the same places to more
+# decimal places, for a comparison that turns on the difference.
+#
 TOKYO = (35.6812, 139.7671)
 KYOTO = (35.0116, 135.7681)
 NARITA = (35.7647, 140.3864)

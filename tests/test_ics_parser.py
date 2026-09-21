@@ -37,8 +37,12 @@ from tripsy_exim.sources.ics import (
 )
 from tripsy_exim.sources.timezones import zone_for
 
-TOKYO = ("Asia/Tokyo", 35.6812, 139.7671)
-NEW_YORK = ("America/New_York", 40.7128, -74.0060)
+# A place and the zone it is in, as `build_calendar` wants a landmark.
+# Suffixed because a bare place name elsewhere in the suite is a
+# position alone.
+#
+TOKYO_ZONED = ("Asia/Tokyo", 35.6812, 139.7671)
+NEW_YORK_ZONED = ("America/New_York", 40.7128, -74.0060)
 
 
 ########################################################################
@@ -240,7 +244,7 @@ class TestClassification:
                before the import runs
         """
         parsed = parse(
-            ics_calendar(items=6, lodging=2, flights=1, landmark=TOKYO)
+            ics_calendar(items=6, lodging=2, flights=1, landmark=TOKYO_ZONED)
         )
 
         check.equal(len(parsed.hostings), 2, "lodging")
@@ -274,7 +278,7 @@ class TestClassification:
         places a leg within a few tens of kilometres and no closer.  The
         instants are unaffected either way: TripIt writes them in UTC.
         """
-        parsed = parse(ics_calendar(items=1, flights=1, landmark=TOKYO))
+        parsed = parse(ics_calendar(items=1, flights=1, landmark=TOKYO_ZONED))
         leg = parsed.transportations[0]
 
         check.equal(leg.transportation_type, "airplane", "typed")
@@ -304,14 +308,14 @@ class TestTimezones:
         [
             # Every event has coordinates: derived outright.
             (
-                {"items": 3, "missing_geo": 0, "landmark": TOKYO},
+                {"items": 3, "missing_geo": 0, "landmark": TOKYO_ZONED},
                 [("Asia/Tokyo", "geo")] * 3,
             ),
             # The first has none, as a real file's gaps do.  It inherits
             # from the event *after* it -- a forward-only search would
             # leave it unzoned and its instants read as UTC.
             (
-                {"items": 3, "missing_geo": 1, "landmark": TOKYO},
+                {"items": 3, "missing_geo": 1, "landmark": TOKYO_ZONED},
                 [
                     ("Asia/Tokyo", "inherited"),
                     ("Asia/Tokyo", "geo"),
@@ -378,7 +382,7 @@ class TestTimeForms:
         [
             # Floating 09:00 with Tokyo coordinates is 00:00 UTC.
             (
-                {"floating": 1, "landmark": TOKYO},
+                {"floating": 1, "landmark": TOKYO_ZONED},
                 datetime(2027, 6, 1, 0, 0, tzinfo=UTC),
                 False,
             ),
@@ -392,14 +396,14 @@ class TestTimeForms:
             # Date-only becomes local midnight, so the day it lands on is
             # the day it was written for.
             (
-                {"date_only": 1, "landmark": TOKYO},
+                {"date_only": 1, "landmark": TOKYO_ZONED},
                 datetime(2027, 5, 31, 15, 0, tzinfo=UTC),
                 True,
             ),
             # An already-aware instant is untouched, whatever zone was
             # derived.  This is 1260 of the 1339 real events.
             (
-                {"landmark": NEW_YORK},
+                {"landmark": NEW_YORK_ZONED},
                 datetime(2027, 6, 1, 9, 0, tzinfo=UTC),
                 False,
             ),
@@ -570,7 +574,7 @@ class TestPassthrough:
         WHEN:  it is parsed
         THEN:  the characters arrive intact rather than mangled
         """
-        parsed = parse(ics_calendar(items=1, non_ascii=1, landmark=TOKYO))
+        parsed = parse(ics_calendar(items=1, non_ascii=1, landmark=TOKYO_ZONED))
         activity = parsed.activities[0]
 
         assert any(
@@ -655,7 +659,7 @@ class TestFieldsWithNoHomeOnTheModel:
                silent
         """
         parsed = parse(
-            ics_calendar(items=1, date_only=1, landmark=TOKYO, **kwargs)
+            ics_calendar(items=1, date_only=1, landmark=TOKYO_ZONED, **kwargs)
         )
         built = getattr(parsed, collection)[0]
 
@@ -698,7 +702,7 @@ class TestFieldsWithNoHomeOnTheModel:
         """
         mocker.patch("tripsy_exim.sources.ics._zoneinfo", return_value=None)
 
-        parsed = parse(ics_calendar(items=1, floating=1, landmark=TOKYO))
+        parsed = parse(ics_calendar(items=1, floating=1, landmark=TOKYO_ZONED))
         note = parsed.notes[0]
 
         check.equal(note.timezone, "Asia/Tokyo", "the name was derived")
