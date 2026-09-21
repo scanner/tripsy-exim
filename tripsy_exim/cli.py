@@ -223,6 +223,26 @@ def open_session(
 
 ####################################################################
 #
+def plural(count: int, singular: str, suffix: str = "s") -> str:
+    """
+    A count and its noun, agreeing with each other.
+
+    Summary lines are read far more often than they are written, and a
+    run that reports '1 trips' reads as a bug in the counting.
+
+    Args:
+        count: How many.
+        singular: What one of them is called.
+        suffix: What to add for more than one.
+
+    Returns:
+        The count and the noun, e.g. '1 trip' or '2 trips'.
+    """
+    return f"{count} {singular}{'' if count == 1 else suffix}"
+
+
+####################################################################
+#
 def archive_for(archive_root: Path | None) -> Path:
     """
     Settle which directory holds the archive.
@@ -500,7 +520,7 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
             mark = "->"
         click.echo(f"  {mark}  {str(starts or ''):10}  {name[:48]:48} {key}")
 
-    click.echo(f"\n{shown} trips, {len(done)} already uploaded")
+    click.echo(f"\n{plural(shown, 'trip')}, {len(done)} already uploaded")
 
 
 ####################################################################
@@ -710,7 +730,8 @@ def upload_command(
                 click.echo(f"      {obj.when:16} {obj.name[:48]}")
 
     click.echo(
-        f"\n{len(plans)} trips, {objects} objects, {untyped} untyped legs"
+        f"\n{plural(len(plans), 'trip')}, {plural(objects, 'object')}, "
+        f"{untyped} untyped legs"
     )
     if skipped:
         click.echo(f"{skipped} trips skipped, already uploaded")
@@ -1232,7 +1253,7 @@ def backfill_report_command(
             )
 
     if not found:
-        click.echo(f"{len(keys)} trips, nothing open")
+        click.echo(f"{plural(len(keys), 'trip')}, nothing open")
         return
 
     click.echo("\nby place, commonest first:")
@@ -1245,7 +1266,9 @@ def backfill_report_command(
             f"{endpoints or rows[0].population}"
         )
 
-    click.echo(f"\n{len(found)} gaps across {len(keys)} trips")
+    click.echo(
+        f"\n{plural(len(found), 'gap')} across {plural(len(keys), 'trip')}"
+    )
 
 
 ####################################################################
@@ -1311,7 +1334,9 @@ def backfill_export_command(
 
     write_worklist(destination, archive, rows)
     click.echo(f"{len(rows)} rows written to {destination}")
-    click.echo("Edit it, then: tripsy-exim backfill apply --write")
+    click.echo(
+        f"Edit it, then: tripsy-exim backfill apply {destination} --write"
+    )
 
 
 ####################################################################

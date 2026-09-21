@@ -43,14 +43,6 @@ LATER = "Later trip"
 ####################################################################
 #
 @pytest.fixture
-def runner() -> CliRunner:
-    """A Click runner for the command group."""
-    return CliRunner()
-
-
-####################################################################
-#
-@pytest.fixture
 def write_export(tmp_path: Path) -> Callable[..., Path]:
     """Write a synthetic JSON export to disk and give back its path."""
 

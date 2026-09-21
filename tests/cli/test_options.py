@@ -66,7 +66,7 @@ class TestArchiveResolution:
         result = runner.invoke(main, ["list"])
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in("1 trips", result.output)
+        check.is_in("1 trip", result.output)
 
     ####################################################################
     #

@@ -40,8 +40,8 @@ TripIt leaves in its notes.
 
 TripIt does not offer one from the app. Email `support@tripit.com` from the
 address you sign in with, asking for a "GDPR Request - complete JSON export
-of my personal account data". Invoking GDPR is what gets it delivered
-within a defined time; what arrives is an ordinary JSON file.
+of my personal account data". The reply has arrived within a couple of
+days, with an ordinary JSON file attached to it.
 
 ## OPTIONS
 

@@ -1,13 +1,21 @@
 # Documentation
 
-Reference pages for `tripsy-exim`. One page per command, plus two on the
-things every command shares: the object model the data is held in, and
-the archive it is held on disk.
+Two kinds of page, and the titles say which is which.
 
-They are written as man pages -- SYNOPSIS, DESCRIPTION, OPTIONS,
-EXAMPLES -- and the section number in each title says which kind it is.
-A `(1)` is a command you run. A `(7)` is a concept several commands
-share, which is why it has no synopsis of its own.
+A **guide** has a plain title and is something you follow start to
+finish. A **reference page** carries a man-page section number and is
+something you look things up in: `(1)` is a command you run, `(7)` is a
+concept several commands share, which is why it has no synopsis of its
+own. Reference pages are written as man pages -- SYNOPSIS, DESCRIPTION,
+OPTIONS, EXAMPLES.
+
+## Guides
+
+| Page | |
+|---|---|
+| [Importing your TripIt trips into Tripsy](importing.md) | The whole thing, start to finish. **Start here.** |
+
+## Reference
 
 | Page | |
 |---|---|
@@ -90,7 +98,12 @@ command:
 
 ## Where to start
 
-Reading in this order builds up the way the project does:
+**If you want to move your trips**, follow
+[the importing guide](importing.md). It covers every step and links here
+where you want more detail.
+
+**If you want to understand the project**, reading in this order builds
+it up the way the project does:
 
 1. [models(7)](models.md) -- what a trip is, once it is out of whatever
    format it arrived in.
