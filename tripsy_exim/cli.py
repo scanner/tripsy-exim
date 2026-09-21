@@ -74,6 +74,13 @@ from tripsy_exim.sync.importer import (
     uploaded_trips,
     verify_trip,
 )
+from tripsy_exim.sync.worklist import (
+    WorkListError,
+    apply_rows,
+    export_rows,
+    read_worklist,
+    write_worklist,
+)
 
 
 ########################################################################
@@ -1234,6 +1241,132 @@ def backfill_report_command(
         )
 
     click.echo(f"\n{len(found)} gaps across {len(keys)} trips")
+
+
+####################################################################
+#
+@backfill_group.command("export")
+@click.argument("destination", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--population",
+    "wanted_populations",
+    multiple=True,
+    type=click.Choice(POPULATIONS),
+    help="Write rows for only these kinds of gap.  Repeatable.",
+)
+@click.argument("wanted", nargs=-1)
+def backfill_export_command(
+    destination: Path,
+    archive_root: Path | None,
+    wanted_populations: tuple[str, ...],
+    wanted: tuple[str, ...],
+) -> None:
+    """
+    Write the work-list to DESTINATION, to be edited and applied back.
+
+    Each row arrives pre-filled with what the object holds now: empty
+    for an endpoint nothing places, the parser's guess for a timezone it
+    was unsure of.  Fill a row in and `backfill apply` writes it as a
+    correction; leave it alone and nothing happens.
+
+    A row whose value is an empty string is one deliberately left blank
+    and is skipped, as is any key ending in '_note', which is there for
+    a reader rather than for the archive.
+    """
+    archive = staged_archive(archive_root)
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = archive.trip_keys()
+    if not keys:
+        raise click.ClickException(f"no staged trips in {archive.root}")
+
+    asked = set(wanted_populations) or set(POPULATIONS)
+    rows = [
+        row
+        for row in export_rows(archive, in_travel_order(archive, keys))
+        if row.get("population") in asked
+    ]
+    if not rows:
+        raise click.ClickException("nothing is open; no work-list written")
+
+    write_worklist(destination, archive, rows)
+    click.echo(f"{len(rows)} rows written to {destination}")
+    click.echo("Edit it, then: tripsy-exim backfill apply --write")
+
+
+####################################################################
+#
+@backfill_group.command("apply")
+@click.argument(
+    "source", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--write/--dry-run",
+    default=False,
+    help="Save the corrections.  Without it, report what would be saved.",
+)
+def backfill_apply_command(
+    source: Path, archive_root: Path | None, write: bool
+) -> None:
+    """
+    Read an edited work-list back and write it as corrections.
+
+    Dry run by default.  Nothing is saved until --write, and a run that
+    changes nothing says so rather than rewriting the correction files.
+
+    Only what differs from what the object already holds is written, so
+    running the same file twice does nothing the second time.  Existing
+    corrections are merged rather than replaced: applying a second
+    work-list does not discard the first.
+    """
+    archive = staged_archive(archive_root)
+
+    try:
+        rows = read_worklist(source, archive)
+    except WorkListError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    outcome = apply_rows(archive, rows, write=write)
+
+    for label, why in outcome.refused:
+        click.echo(f"  refused  {label}: {why}")
+
+    verb = "written" if write else "would be written"
+    click.echo(
+        f"\n{outcome.written} {verb} -- {outcome.corrected} corrected, "
+        f"{outcome.retyped} retyped, {outcome.added} added"
+    )
+    click.echo(
+        f"{outcome.unchanged} already correct, "
+        f"{outcome.left_blank} left blank, {len(outcome.refused)} refused"
+    )
+    if outcome.written and not write:
+        click.echo("\nNothing was saved.  Pass --write to save it.")
 
 
 if __name__ == "__main__":

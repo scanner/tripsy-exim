@@ -82,8 +82,22 @@ from tripsy_exim.sync.staging import (
     stage_export_file,
     stage_file,
 )
+from tripsy_exim.sync.worklist import (
+    Outcome,
+    WorkListError,
+    apply_rows,
+    export_rows,
+    read_worklist,
+    write_worklist,
+)
 
 __all__ = [
+    "Outcome",
+    "WorkListError",
+    "apply_rows",
+    "export_rows",
+    "read_worklist",
+    "write_worklist",
     "GUESSED_TIMEZONE",
     "POPULATIONS",
     "SKIPPED",

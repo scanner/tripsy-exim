@@ -16,7 +16,6 @@ ordinary flight places both its ends, as real exports nearly always do.
 # system imports
 import json
 from collections.abc import Callable
-from typing import Any
 
 # 3rd party imports
 import pytest
@@ -25,7 +24,6 @@ import pytest_check as check
 # Project imports
 from tests import tripit_builder as b
 from tripsy_exim.store import Archive
-from tripsy_exim.sync import stage_export
 from tripsy_exim.sync.backfill import (
     ARRIVAL,
     DEPARTURE,
@@ -42,42 +40,6 @@ from tripsy_exim.sync.importer import composed_children
 from tripsy_exim.sync.overrides import OverrideSet, save_overrides
 
 
-####################################################################
-#
-@pytest.fixture
-def staged(archive: Archive) -> Callable[..., str]:
-    """
-    Stage one trip of the given objects and give back its key.
-
-    A test says what the trip is made of and gets straight to asserting
-    what the trip is open about.
-    """
-
-    def stage(*objects: dict[str, Any], name: str = "Kyoto, May 2011") -> str:
-        stage_export(archive, b.export(b.trip(name=name, objects=[*objects])))
-        keys = archive.trip_keys()
-        assert len(keys) == 1
-        return keys[0]
-
-    return stage
-
-
-####################################################################
-#
-@pytest.fixture
-def unplaceable_trip(staged: Callable[..., str]) -> str:
-    """
-    A trip of two flights that both leave from one unplaced airport.
-
-    Two, because a place seen twice is what the recurrence grouping is
-    for, and one trip holding only one of each would never show it.
-    """
-    return staged(
-        b.flight(frm="Narita", to="Vancouver", placed=False),
-        b.flight(frm="Narita", to="Seattle", placed=False),
-    )
-
-
 ########################################################################
 ########################################################################
 #
@@ -87,7 +49,7 @@ class TestPlaces:
     ####################################################################
     #
     def test_a_leg_carries_two_places_and_a_stay_carries_one(
-        self, staged: Callable[..., str], archive: Archive
+        self, staged_trip_of: Callable[..., str], archive: Archive
     ) -> None:
         """
         GIVEN: a trip holding a flight and a hotel booking
@@ -98,7 +60,7 @@ class TestPlaces:
         airport and dropped downtown knows one and not the other -- so
         they cannot be one place between them.
         """
-        key = staged(b.flight(), b.lodging())
+        key = staged_trip_of(b.flight(), b.lodging())
 
         counted = {
             type(obj).__name__: [p.endpoint for p in places(obj)]
@@ -151,7 +113,7 @@ class TestGaps:
     ####################################################################
     #
     def test_a_placed_trip_is_open_about_nothing(
-        self, staged: Callable[..., str], archive: Archive
+        self, staged_trip_of: Callable[..., str], archive: Archive
     ) -> None:
         """
         GIVEN: a trip whose flight places both of its ends
@@ -162,7 +124,7 @@ class TestGaps:
         otherwise would bury the few real gaps under hundreds of objects
         that are perfectly fine.
         """
-        key = staged(b.flight(), b.lodging())
+        key = staged_trip_of(b.flight(), b.lodging())
 
         found = gaps(archive, key)
 
