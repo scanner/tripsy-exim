@@ -221,12 +221,29 @@ it away free.
   Money is `Decimal` in memory and on disk, and a float only on the wire.
   The fields this applies to are named in `MONEY_FIELDS`.
 
-Free strings where a value set is undocumented
+Free strings, for three different reasons
 : `activity_type`, `period`, `transportation_type`, `seat_class` and the
   endpoint `location_type` fields are all `str | None` rather than enums.
-  The API documents no value set for any of them and only a handful of
-  values have been observed, so constraining them would turn an
-  unanticipated value into a failed import.
+
+  **`activity_type` is open by design.** It holds a category slug, and
+  Tripsy's MCP server documents 47 built-in ones -- `general` for
+  uncategorised, plus `restaurant`, `cafe`, `museum`, `winery` and the
+  rest. But a person can define their own categories, and those slugs
+  are equally valid in the same field. An enum cannot express that. A
+  custom slug is opaque and resolves to a name, icon and colour only
+  through the categories endpoint, which answers for the categories the
+  caller can see -- so a slug already stored on an activity can stop
+  resolving when its owner stops sharing the trip it came from.
+
+  **`transportation_type` comes from a fixed set**, recorded in
+  `sources/tripit.py` where it was read off the app by building one of
+  each. The published list omits `subway` and `transfer`, which the app
+  writes anyway, so the documented set is not the whole of it.
+
+  **The rest have no documented value set** and few observed values.
+
+  In every case constraining the field would turn an unanticipated value
+  into a failed import.
 
 `sort_order`
 : One dense sequence across a whole trip rather than per collection or

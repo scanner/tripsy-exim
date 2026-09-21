@@ -51,9 +51,26 @@ class Activity(CanonicalModel):
     trip: int | None = None
     hidden: bool | None = None
 
-    # NOTE: the API documents no value set for `activity_type` or `period`,
-    # and only 'sightseeing' has been observed.  Keeping them free strings
-    # means an unanticipated value imports rather than failing validation.
+    # NOTE: `activity_type` holds a category slug.  Tripsy's MCP server
+    # documents 47 built-in ones -- 'general' for uncategorised, plus
+    # 'restaurant', 'cafe', 'museum', 'winery' and the rest -- and the
+    # API filters on them.  The REST documentation lists none of this,
+    # which is why it once read here as having no value set at all.
+    #
+    # The set is not closed.  A person defines their own categories and
+    # those slugs are equally valid in this field.  A custom slug is
+    # opaque: its name, icon and colour come from the categories
+    # endpoint, which answers only for categories the caller can see --
+    # so a slug stored here can stop resolving once its owner stops
+    # sharing the trip it came from.
+    #
+    # Read off one trip on 2026-09-21: 'general', 'restaurant' and a
+    # custom slug, all three in this one field.  That is the reason it
+    # is a free string, over and above surviving a value Tripsy adds
+    # later.
+    #
+    # `period` is a different matter: no documented value set, and none
+    # observed.
     #
     activity_type: str | None = None
     period: str | None = None

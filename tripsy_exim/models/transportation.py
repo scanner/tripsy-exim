@@ -73,8 +73,14 @@ class Transportation(CanonicalModel):
     description: str | None = None
     notes: str | None = None
 
-    # NOTE: as with `activity_type`, the documented value set is empty and
-    # only 'airplane' and the seat class 'economy' have been observed.
+    # NOTE: `transportation_type` holds a mode slug from a fixed set --
+    # unlike `activity_type`, nobody can add to it.  The values are
+    # recorded in `sources/tripit.py`, read off the app by building one
+    # of each; the published list omits 'subway' and 'transfer', which
+    # the app writes anyway.
+    #
+    # Free strings so a value Tripsy adds later imports rather than
+    # failing validation.  'economy' is the only `seat_class` seen.
     #
     transportation_type: str | None = None
     seat_class: str | None = None
