@@ -10,6 +10,7 @@ rather than printing an empty table.
 """
 
 # system imports
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -207,3 +208,163 @@ class TestBackfillReport:
 
         check.equal(result.exit_code, 1)
         check.is_in(str(empty), result.output)
+
+
+########################################################################
+########################################################################
+#
+class TestBackfillRoundTrip:
+    """Tests for writing the work-list out and reading it back."""
+
+    ####################################################################
+    #
+    def test_export_then_apply_closes_the_gap(
+        self,
+        unplaceable: Path,
+        runner: CliRunner,
+        tmp_path: Path,
+        report: Callable[..., str],
+    ) -> None:
+        """
+        GIVEN: an archive with unplaceable endpoints
+        WHEN:  the work-list is exported, filled in and applied
+        THEN:  the report no longer lists what was answered
+
+        The whole point of the pair, end to end: nothing else proves
+        that what `export` writes is what `apply` can read.
+        """
+        work = tmp_path / "work.json"
+        written = runner.invoke(
+            main,
+            [
+                "backfill",
+                "export",
+                str(work),
+                "--archive",
+                str(unplaceable),
+            ],
+        )
+        assert written.exit_code == 0, written.output
+
+        document = json.loads(work.read_text())
+        for row in document["rows"]:
+            if row["object"].startswith("NAR"):
+                row["fields"]["departure_address"] = "Narita Airport"
+        work.write_text(json.dumps(document))
+
+        applied = runner.invoke(
+            main,
+            [
+                "backfill",
+                "apply",
+                str(work),
+                "--archive",
+                str(unplaceable),
+                "--write",
+            ],
+        )
+
+        check.equal(applied.exit_code, 0, applied.output)
+        check.is_in("2 written", applied.output)
+        check.is_not_in("NAR", report(unplaceable))
+
+    ####################################################################
+    #
+    def test_apply_is_a_dry_run_by_default(
+        self,
+        unplaceable: Path,
+        runner: CliRunner,
+        tmp_path: Path,
+        report: Callable[..., str],
+    ) -> None:
+        """
+        GIVEN: a filled-in work-list
+        WHEN:  apply runs without --write
+        THEN:  it says what it would do and the gaps stay open
+
+        Matching `upload` and `fix-locations`, which are also dry by
+        default.  A command that writes corrections unasked would be
+        the odd one out.
+        """
+        work = tmp_path / "work.json"
+        runner.invoke(
+            main,
+            ["backfill", "export", str(work), "--archive", str(unplaceable)],
+        )
+        document = json.loads(work.read_text())
+        for row in document["rows"]:
+            row["fields"]["departure_address"] = "Somewhere"
+        work.write_text(json.dumps(document))
+
+        result = runner.invoke(
+            main,
+            ["backfill", "apply", str(work), "--archive", str(unplaceable)],
+        )
+
+        check.is_in("would be written", result.output)
+        check.is_in("Nothing was saved", result.output)
+        check.is_in("NAR", report(unplaceable), "still open")
+
+    ####################################################################
+    #
+    def test_export_refuses_when_nothing_is_open(
+        self, staged: Callable[..., Path], runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """
+        GIVEN: an archive whose trip places everything
+        WHEN:  a work-list is exported
+        THEN:  it fails rather than writing an empty file
+
+        An empty work-list is a file somebody would then edit and apply
+        to no effect.  Saying so up front is the better answer.
+        """
+        work = tmp_path / "work.json"
+
+        result = runner.invoke(
+            main,
+            ["backfill", "export", str(work), "--archive", str(staged())],
+        )
+
+        check.equal(result.exit_code, 1)
+        check.is_in("nothing is open", result.output)
+        check.is_false(work.exists())
+
+    ####################################################################
+    #
+    def test_a_work_list_from_another_archive_is_refused(
+        self,
+        unplaceable: Path,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """
+        GIVEN: a work-list exported from one archive
+        WHEN:  it is applied to another
+        THEN:  it is refused rather than matching nothing
+
+        Applied anyway it would report that nothing needed doing, which
+        is a true statement and the wrong answer.
+        """
+        work = tmp_path / "work.json"
+        runner.invoke(
+            main,
+            ["backfill", "export", str(work), "--archive", str(unplaceable)],
+        )
+
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+
+        result = runner.invoke(
+            main,
+            [
+                "backfill",
+                "apply",
+                str(work),
+                "--archive",
+                str(elsewhere),
+                "--write",
+            ],
+        )
+
+        check.equal(result.exit_code, 1)
+        check.is_in("was exported from", result.output)

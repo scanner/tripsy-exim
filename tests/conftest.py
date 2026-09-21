@@ -44,7 +44,9 @@ from tests.factories import (
 )
 from tests.fake_tripsy import BASE, FakeTripsy, transport
 from tripsy_exim.api import IMPORT, RetryPolicy, TripsyClient
+from tripsy_exim.sources import parse
 from tripsy_exim.store import Archive
+from tripsy_exim.sync import stage, stage_export
 
 # Wire-shaped payloads, as the API returns them.
 #
@@ -373,3 +375,89 @@ def api_client(
     """A client on the fake, paced by the import profile."""
     with client_for(paced_tripsy, clock, profile=IMPORT) as client:
         yield client
+
+
+####################################################################
+#
+@pytest.fixture
+def staged_trip_of(archive: Archive) -> Callable[..., str]:
+    """
+    Stage one trip of the given objects and give back its key.
+
+    A test says what the trip is made of and gets straight to asserting
+    what the trip is open about.
+    """
+
+    def stage(*objects: dict[str, Any], name: str = "Kyoto, May 2011") -> str:
+        stage_export(
+            archive,
+            tripit_builder.export(
+                tripit_builder.trip(name=name, objects=[*objects])
+            ),
+        )
+        keys = archive.trip_keys()
+        assert len(keys) == 1
+        return keys[0]
+
+    return stage
+
+
+####################################################################
+#
+@pytest.fixture
+def unplaceable_trip(staged_trip_of: Callable[..., str]) -> str:
+    """
+    A trip of two flights that both leave from one unplaced airport.
+
+    `placed=False` is what makes an endpoint unplaceable: the export
+    carries the airport's code without its name, so there is neither an
+    address to geocode nor a position to draw a pin from.  Two flights,
+    because a place seen twice is what the recurrence grouping is for.
+    """
+    return staged_trip_of(
+        tripit_builder.flight(frm="Narita", to="Vancouver", placed=False),
+        tripit_builder.flight(frm="Narita", to="Seattle", placed=False),
+    )
+
+
+####################################################################
+#
+@pytest.fixture
+def mixed_gaps_trip(staged_trip_of: Callable[..., str]) -> str:
+    """
+    A trip open in three different ways at once.
+
+    An activity no rule matched (which a retype moves), a map pin the
+    parser produced nothing for (which an addition puts back), and a
+    flight carrying codes and no names (which needs placing).  One trip
+    rather than three, so a test covering the work-list's three remedies
+    does not stage three times to do it.
+    """
+    return staged_trip_of(
+        tripit_builder.activity(name="Johnson Museum"),
+        tripit_builder.map_pin(),
+        tripit_builder.flight(frm="Narita", to="Osaka", placed=False),
+    )
+
+
+####################################################################
+#
+@pytest.fixture
+def guessed_timezone_trip(
+    archive: Archive, ics_calendar: Callable[..., str]
+) -> str:
+    """
+    A trip holding an event whose timezone the parser had to guess.
+
+    A zone is derived from an event's coordinates; an event carrying
+    none inherits its neighbour's, which is marked as a guess and is
+    wrong for anything that crossed a border.
+
+    Staged from a calendar rather than an export because only the
+    calendar path can produce one: the JSON export either says outright
+    what zone a record is in or says nothing, and never guesses.
+    """
+    stage(archive, parse(ics_calendar(items=4, missing_geo=1)))
+    keys = archive.trip_keys()
+    assert len(keys) == 1
+    return keys[0]

@@ -5,6 +5,10 @@
 ```text
 tripsy-exim backfill report [--archive DIRECTORY]
                             [--population NAME]... [TRIP]...
+tripsy-exim backfill export FILE [--archive DIRECTORY]
+                            [--population NAME]... [TRIP]...
+tripsy-exim backfill apply  FILE [--archive DIRECTORY]
+                            [--write | --dry-run]
 ```
 
 ## RUNNING
@@ -26,7 +30,9 @@ back out, together with the objects Tripsy would have no way to place,
 and says what is still open -- so corrections are written against a list
 instead of against a directory of JSON files.
 
-Only `report` exists so far. It writes nothing.
+`report` says what is open and writes nothing. `export` turns the same
+gaps into an editable file, and `apply` reads that file back as
+corrections. `infer` is not written yet.
 
 ### The four populations
 
@@ -43,6 +49,13 @@ The fourth the parser does not know it has:
 | population    | what it means                     | what closes it   |
 |---------------|-----------------------------------|------------------|
 | `unplaceable` | Neither an address nor a position | a **correction** |
+
+`guessed_timezone` only ever comes from a calendar. A zone is derived
+from an event's coordinates, and an event carrying none inherits its
+neighbour's -- which is a guess, and wrong for anything that crossed a
+border. A TripIt JSON export either says outright what zone a record is
+in or says nothing, so a trip staged with
+[stage-export(1)](stage-export.md) never has one.
 
 ### Why "unplaceable" is one question and not two
 
@@ -91,6 +104,75 @@ so answering it once closes every gap that names it; the long tail of
 places seen exactly once is what is left afterwards. Ties are broken
 alphabetically, so the same archive prints the same work-list every run.
 
+## THE WORK-LIST
+
+`export` writes one JSON row per open gap. Each row carries the source
+uuid a correction is keyed by, the model field names it would set, and
+the values the object holds right now:
+
+```json
+{
+  "trip": "Kyoto, May 2011",
+  "trip_key": "txim-tripit-json-g01-2440a45a...",
+  "uuid": "b3de6dbb-a4fd-5545-9abb-8156d9970a56",
+  "identifier": "txim-tripit-json-g01-117b488f...",
+  "population": "unplaceable",
+  "object": "NAR (departure)",
+  "fields": {
+    "departure_address": "",
+    "departure_latitude": "",
+    "departure_longitude": ""
+  }
+}
+```
+
+Real field names rather than logical ones, so the file says plainly what
+it will set and applying a row is mechanical.
+
+Three conventions, all of them about telling *not answered* apart from
+*answered with nothing*:
+
+| in the file | what it means |
+|---|---|
+| an empty string | a blank left deliberately blank; skipped |
+| an unchanged value | already correct; skipped |
+| a key in `fields` ending `_note` | commentary for a reader; never written |
+
+So a row you do not touch does nothing, and running the same file twice
+does nothing the second time. That is what makes the loop safe to repeat
+-- export, fill in what you know, apply, and go round again.
+
+A row's shape depends on its population. `unplaceable` and
+`guessed_timezone` rows carry `fields`; `unclassified` rows carry a
+`collection` to change; `skipped` rows carry both, with the collection
+blank because there is no object to read one from. **A `skipped` row
+with no collection is passed over, not refused** -- that is its ordinary
+state, and refusing it would make every unanswered row an error on every
+run.
+
+### Values are checked before they are stored
+
+A correction is laid over its object with pydantic's `model_copy`, which
+does not validate. A latitude typed into the JSON as `"35.7720"` would
+therefore reach Tripsy as the string it looks like.
+
+So `apply` merges each row into its object, validates the result, and
+stores the validated form: `"35.7720"` is kept as the number `35.772`,
+and `"not a latitude"` is refused by name rather than discovered halfway
+through an upload.
+
+### Applying more than one work-list
+
+Corrections are loaded and merged rather than replaced, so applying a
+second work-list does not discard the first. A trip keeps all of its
+corrections in one file, so rows are grouped by trip before anything is
+written.
+
+The file records the archive it came from, and `apply` refuses one
+exported from somewhere else. Applied anyway it would match no uuids and
+report that nothing needed doing, which is a true statement and the
+wrong answer.
+
 ## OPTIONS
 
 `--archive DIRECTORY`
@@ -102,8 +184,16 @@ alphabetically, so the same archive prints the same work-list every run.
   One of `unclassified`, `guessed_timezone`, `skipped`, `unplaceable`.
 
 `TRIP`
-: Trips to report on, by key or by part of a name. Naming none reports
-  the whole archive.
+: Trips to act on, by key or by part of a name. Naming none covers the
+  whole archive.
+
+`FILE`
+: The work-list. `export` writes it, `apply` reads it.
+
+`--write`, `--dry-run`
+: `apply` only. Dry run by default, matching [upload(1)](upload.md) and
+  [fix-locations(1)](fix-locations.md): nothing is saved until
+  `--write`.
 
 ## EXAMPLES
 
@@ -125,6 +215,23 @@ Just the things a retype would fix:
 uv run tripsy-exim backfill report --population unclassified
 ```
 
+The round trip. Write the work-list, edit it, see what it would do, then
+do it:
+
+```sh
+uv run tripsy-exim backfill export work.json
+$EDITOR work.json
+uv run tripsy-exim backfill apply work.json
+uv run tripsy-exim backfill apply work.json --write
+```
+
+One trip's placing gaps on their own, which is the usual way in -- the
+repeated airports first, since answering one closes every gap naming it:
+
+```sh
+uv run tripsy-exim backfill export work.json --population unplaceable 'Kyoto'
+```
+
 ## NOTES
 
 An archive directory that exists but holds no staged trips is an error
@@ -132,10 +239,13 @@ rather than an empty report: having nothing open and having staged
 nothing are different answers, and the second is usually the wrong
 `--archive`.
 
-`backfill infer`, `backfill export` and `backfill apply` are not written
-yet. When they are, `infer` runs first -- it fills what the archive can
-work out from itself, with no human input, so the list this command
-prints is shorter by the time a person reads it.
+`export` refuses to write an empty work-list. A file with no rows is one
+you would edit and apply to no effect, so saying "nothing is open" up
+front is the better answer.
+
+`backfill infer` is not written yet. When it is, it runs first -- it
+fills what the archive can work out from itself, with no human input, so
+the work-list is shorter by the time a person opens it.
 
 ## SEE ALSO
 
