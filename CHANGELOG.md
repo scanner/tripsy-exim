@@ -15,3 +15,5 @@ described in [README.md](README.md).
 
 - `backfill report` says what the staged trips still need a person for,
   with the places listed commonest first.
+- `backfill export` writes an editable work-list of what is open, and
+  `backfill apply` reads it back as corrections.
