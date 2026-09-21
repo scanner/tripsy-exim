@@ -461,6 +461,10 @@ class Archive:
         so a change made while the run was in flight is caught by the next
         one rather than missed.
 
+        Nothing reads this yet, and the export as designed never will: it
+        writes a complete dated snapshot, which needs no watermark.  Kept
+        until the exporter lands and can say whether it wants the field.
+
         Args:
             started_at: When the run began.  Defaults to now.
 

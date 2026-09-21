@@ -165,7 +165,7 @@ Overrides are applied on the way out, during `upload`, and nowhere else.
 | `identifier_cache` | `internal_identifier` to the numeric Tripsy id it was given, so an uploaded object can be read back without searching. |
 | `uploaded_trips` | Trip key to when a run finished uploading it. This is what `list` marks and what `upload` steps over. |
 | `merged_trips` | Absorbed trip key to the trip it uploads into. See [merge(1)](merge.md). |
-| `last_export_at` | High-water mark for incremental export. |
+| `last_export_at` | Written by `record_export`, read by nothing. The export side was going to be incremental; it takes a complete dated snapshot instead, which consults no watermark. |
 
 Deleting the manifest does not lose trip data, but it does lose the
 knowledge of what was already uploaded -- which is harmless, since a

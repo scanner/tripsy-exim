@@ -7,9 +7,9 @@ The canonical models in `tripsy_exim.models` are the hinge between every
 other layer: parsers in `sources` target them, `sync.importer` writes them
 to Tripsy through `api`, and `store` is where they live on disk.
 
-Reading a whole account back out of Tripsy is not written yet: `api` takes
-an `updated_since` and `store` keeps the watermark, but nothing drives
-them.
+Reading a whole account back out of Tripsy is not written yet.  It will
+write a complete dated snapshot into a second archive rather than
+updating this one in place.
 """
 
 __version__ = "0.1.0"
