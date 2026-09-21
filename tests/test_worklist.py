@@ -49,9 +49,10 @@ from tripsy_exim.sync.worklist import (
 )
 
 # What a filled-in row says, when a test does not care which airport it
-# is answering.
+# is answering.  Suffixed because a bare place name elsewhere in the
+# suite is a position: this one is the text of an address.
 #
-NARITA = "Narita International Airport"
+NARITA_ADDRESS = "Narita International Airport"
 
 
 ####################################################################
@@ -98,7 +99,7 @@ def fill_departures(rows: list[dict[str, Any]]) -> None:
     """Answer every departure endpoint, leaving the arrivals alone."""
     for row in rows:
         if row.get("object", "").endswith("(departure)"):
-            row["fields"]["departure_address"] = NARITA
+            row["fields"]["departure_address"] = NARITA_ADDRESS
 
 
 ########################################################################
@@ -555,7 +556,7 @@ class TestComposedView:
         composed = _legs(composed_children(archive, unplaceable_trip))
 
         check.equal({o.departure_address for o in on_disk}, {None})
-        check.is_in(NARITA, {o.departure_address for o in composed})
+        check.is_in(NARITA_ADDRESS, {o.departure_address for o in composed})
 
 
 ####################################################################
