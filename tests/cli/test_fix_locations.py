@@ -35,6 +35,7 @@ class TestFixLocationsCommand:
         tmp_path: Path,
         mocker: MockerFixture,
         faker: Faker,
+        opened: Callable[[Path], Archive],
     ) -> Callable[..., tuple[Path, list[tuple]]]:
         """
         One uploaded trip holding one endpoint with an address and no
@@ -46,7 +47,7 @@ class TestFixLocationsCommand:
 
         def make(cached: tuple[float, float] | None) -> tuple[Path, list]:
             archive_root = staged()
-            archive = Archive(archive_root)
+            archive = opened(archive_root)
             key = next(iter(archive.trip_keys()))
             mark_uploaded(archive, key)
             trip = staged_trip(archive, key)
@@ -130,7 +131,7 @@ class TestFixLocationsCommand:
             main,
             [
                 "fix-locations",
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--cache",
                 str(tmp_path / "geocode.json"),
@@ -165,7 +166,7 @@ class TestFixLocationsCommand:
             main,
             [
                 "fix-locations",
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--cache",
                 str(tmp_path / "geocode.json"),
@@ -196,7 +197,7 @@ class TestFixLocationsCommand:
             main,
             [
                 "fix-locations",
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--cache",
                 str(tmp_path / "geocode.json"),
@@ -237,7 +238,7 @@ class TestFixLocationsCommand:
             main,
             [
                 "fix-locations",
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--cache",
                 str(tmp_path / "geocode.json"),
@@ -300,7 +301,7 @@ class TestFixLocationsCommand:
             main,
             [
                 "fix-locations",
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--cache",
                 str(cache_path),

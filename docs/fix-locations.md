@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim fix-locations [--archive DIRECTORY] [--trip TEXT]...
+tripsy-exim fix-locations [--archive NAME] [--trip TEXT]...
                           [--geocoder TEXT] [--api-key TEXT]
                           [--cache FILE] [--far-km FLOAT]
                           [--forget TEXT]... [--write | --dry-run]
@@ -135,9 +135,13 @@ a User-Agent naming this application, as the same policy requires.
 : Credentials for this run. See CREDENTIALS in the
   [README](../README.md).
 
-`--archive DIRECTORY`
-: Used only to resolve `--trip` by name. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`.
+`--archive NAME`
+: Staging archive `--trip` is resolved against. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 ## EXAMPLES
 

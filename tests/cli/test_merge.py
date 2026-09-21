@@ -34,13 +34,16 @@ class TestMergeCommand:
     #
     @pytest.fixture
     def two_keys(
-        self, staged: Callable[..., Path], named_pair: tuple[dict, dict]
+        self,
+        staged: Callable[..., Path],
+        named_pair: tuple[dict, dict],
+        opened: Callable[[Path], Archive],
     ) -> Callable[[], tuple[Path, str, str]]:
         """An archive of two trips, with their keys in travel order."""
 
         def build() -> tuple[Path, str, str]:
             archive_root = staged(*named_pair)
-            archive = Archive(archive_root)
+            archive = opened(archive_root)
             keys = in_travel_order(archive, archive.trip_keys())
             return archive_root, keys[0], keys[1]
 
@@ -52,6 +55,7 @@ class TestMergeCommand:
         self,
         runner: CliRunner,
         two_keys: Callable[[], tuple[Path, str, str]],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: two staged trips
@@ -64,12 +68,13 @@ class TestMergeCommand:
         archive_root, absorbed, target = two_keys()
 
         result = runner.invoke(
-            main, ["merge", "--archive", str(archive_root), absorbed, target]
+            main,
+            ["merge", "--archive-root", str(archive_root), absorbed, target],
         )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("uploads as part of", result.output)
-        check.equal(merged_into(Archive(archive_root)).get(absorbed), target)
+        check.equal(merged_into(opened(archive_root)).get(absorbed), target)
 
     ####################################################################
     #
@@ -77,6 +82,7 @@ class TestMergeCommand:
         self,
         runner: CliRunner,
         two_keys: Callable[[], tuple[Path, str, str]],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: a merge already declared
@@ -89,16 +95,18 @@ class TestMergeCommand:
         """
         archive_root, absorbed, target = two_keys()
         runner.invoke(
-            main, ["merge", "--archive", str(archive_root), absorbed, target]
+            main,
+            ["merge", "--archive-root", str(archive_root), absorbed, target],
         )
 
         result = runner.invoke(
-            main, ["merge", "--archive", str(archive_root), "--undo", absorbed]
+            main,
+            ["merge", "--archive-root", str(archive_root), "--undo", absorbed],
         )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("uploads as its own trip again", result.output)
-        check.is_not_in(absorbed, merged_into(Archive(archive_root)))
+        check.is_not_in(absorbed, merged_into(opened(archive_root)))
 
     ####################################################################
     #
@@ -118,7 +126,7 @@ class TestMergeCommand:
         archive_root, absorbed, _ = two_keys()
 
         result = runner.invoke(
-            main, ["merge", "--archive", str(archive_root), absorbed]
+            main, ["merge", "--archive-root", str(archive_root), absorbed]
         )
 
         check.equal(result.exit_code, 2, result.output)
@@ -130,6 +138,7 @@ class TestMergeCommand:
         self,
         runner: CliRunner,
         two_keys: Callable[[], tuple[Path, str, str]],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: one staged trip named as both halves
@@ -139,12 +148,13 @@ class TestMergeCommand:
         archive_root, absorbed, _ = two_keys()
 
         result = runner.invoke(
-            main, ["merge", "--archive", str(archive_root), absorbed, absorbed]
+            main,
+            ["merge", "--archive-root", str(archive_root), absorbed, absorbed],
         )
 
         check.not_equal(result.exit_code, 0)
         check.is_in("cannot be merged into itself", result.output)
-        check.equal(merged_into(Archive(archive_root)), {})
+        check.equal(merged_into(opened(archive_root)), {})
 
     ####################################################################
     #
@@ -165,7 +175,13 @@ class TestMergeCommand:
 
         result = runner.invoke(
             main,
-            ["merge", "--archive", str(archive_root), "txim-nonsense", target],
+            [
+                "merge",
+                "--archive-root",
+                str(archive_root),
+                "txim-nonsense",
+                target,
+            ],
         )
 
         check.not_equal(result.exit_code, 0)
@@ -175,7 +191,10 @@ class TestMergeCommand:
     ####################################################################
     #
     def test_merging_into_an_absorbed_trip_is_refused(
-        self, runner: CliRunner, staged: Callable[..., Path]
+        self,
+        runner: CliRunner,
+        staged: Callable[..., Path],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: a trip already merged into another
@@ -209,14 +228,14 @@ class TestMergeCommand:
                 objects=[b.flight()],
             ),
         )
-        archive = Archive(archive_root)
+        archive = opened(archive_root)
         first, second, third = in_travel_order(archive, archive.trip_keys())
 
         runner.invoke(
-            main, ["merge", "--archive", str(archive_root), second, first]
+            main, ["merge", "--archive-root", str(archive_root), second, first]
         )
         result = runner.invoke(
-            main, ["merge", "--archive", str(archive_root), third, second]
+            main, ["merge", "--archive-root", str(archive_root), third, second]
         )
 
         check.not_equal(result.exit_code, 0)

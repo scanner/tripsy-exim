@@ -301,8 +301,10 @@ sorted JSON in durable storage rather than a scratch directory, and why
 [models(7)](docs/models.md) is a provider-neutral object model rather
 than a TripIt reader's output.
 
-The staging archive lands in one directory, named by `--archive`, or
-`$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`.
+A staging archive is named by `--archive`, defaulting to `staged`, and
+lives under `<root>/staged/`. The root is `--archive-root`, or
+`$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim`. Several staging
+archives can sit side by side, and exports go under `<root>/exports/`.
 
 #### Stage 2, in practice
 
@@ -325,8 +327,10 @@ sorted JSON in durable storage rather than a scratch directory, and why
 [models(7)](docs/models.md) is a provider-neutral object model rather
 than a TripIt reader's output.
 
-The staging archive lands in one directory, named by `--archive`, or
-`$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`.
+A staging archive is named by `--archive`, defaulting to `staged`, and
+lives under `<root>/staged/`. The root is `--archive-root`, or
+`$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim`. Several staging
+archives can sit side by side, and exports go under `<root>/exports/`.
 
 #### Stage 2, in practice
 

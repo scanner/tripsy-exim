@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim stage-export [--archive DIRECTORY] [--namespace TEXT]
+tripsy-exim stage-export [--archive NAME] [--namespace TEXT]
                          [--scratch] EXPORT
 ```
 
@@ -45,9 +45,13 @@ days, with an ordinary JSON file attached to it.
 
 ## OPTIONS
 
-`--archive DIRECTORY`
-: Where the canonical objects are written. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the canonical objects are written to. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 `--namespace TEXT`
 : Mint identifiers into this namespace instead of the one the export

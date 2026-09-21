@@ -23,6 +23,7 @@ from click.testing import CliRunner
 from tests import tripit_builder as b
 from tests.places import HND, NRT, SEA
 from tripsy_exim.cli import main
+from tripsy_exim.store import DEFAULT_ARCHIVE, staged_path
 
 # The trip the unplaceable fixtures stage, named so a test reading the
 # output can recognise it.
@@ -63,7 +64,7 @@ def report(runner: CliRunner) -> Callable[..., str]:
     def run(archive_root: Path, *args: str) -> str:
         result = runner.invoke(
             main,
-            ["backfill", "report", "--archive", str(archive_root), *args],
+            ["backfill", "report", "--archive-root", str(archive_root), *args],
         )
         assert result.exit_code == 0, result.output
         return result.output
@@ -204,7 +205,7 @@ class TestBackfillReport:
         empty.mkdir()
 
         result = runner.invoke(
-            main, ["backfill", "report", "--archive", str(empty)]
+            main, ["backfill", "report", "--archive-root", str(empty)]
         )
 
         check.equal(result.exit_code, 1)
@@ -241,7 +242,7 @@ class TestBackfillRoundTrip:
                 "backfill",
                 "draft",
                 str(work),
-                "--archive",
+                "--archive-root",
                 str(unplaceable),
             ],
         )
@@ -259,7 +260,7 @@ class TestBackfillRoundTrip:
                 "backfill",
                 "apply",
                 str(work),
-                "--archive",
+                "--archive-root",
                 str(unplaceable),
                 "--write",
             ],
@@ -290,7 +291,13 @@ class TestBackfillRoundTrip:
         work = tmp_path / "work.json"
         runner.invoke(
             main,
-            ["backfill", "draft", str(work), "--archive", str(unplaceable)],
+            [
+                "backfill",
+                "draft",
+                str(work),
+                "--archive-root",
+                str(unplaceable),
+            ],
         )
         document = json.loads(work.read_text())
         for row in document["rows"]:
@@ -299,7 +306,13 @@ class TestBackfillRoundTrip:
 
         result = runner.invoke(
             main,
-            ["backfill", "apply", str(work), "--archive", str(unplaceable)],
+            [
+                "backfill",
+                "apply",
+                str(work),
+                "--archive-root",
+                str(unplaceable),
+            ],
         )
 
         check.is_in("would be written", result.output)
@@ -323,7 +336,7 @@ class TestBackfillRoundTrip:
 
         result = runner.invoke(
             main,
-            ["backfill", "draft", str(work), "--archive", str(staged())],
+            ["backfill", "draft", str(work), "--archive-root", str(staged())],
         )
 
         check.equal(result.exit_code, 1)
@@ -349,11 +362,17 @@ class TestBackfillRoundTrip:
         work = tmp_path / "work.json"
         runner.invoke(
             main,
-            ["backfill", "draft", str(work), "--archive", str(unplaceable)],
+            [
+                "backfill",
+                "draft",
+                str(work),
+                "--archive-root",
+                str(unplaceable),
+            ],
         )
 
         elsewhere = tmp_path / "elsewhere"
-        elsewhere.mkdir()
+        staged_path(elsewhere, DEFAULT_ARCHIVE).mkdir(parents=True)
 
         result = runner.invoke(
             main,
@@ -361,7 +380,7 @@ class TestBackfillRoundTrip:
                 "backfill",
                 "apply",
                 str(work),
-                "--archive",
+                "--archive-root",
                 str(elsewhere),
                 "--write",
             ],
@@ -418,7 +437,7 @@ class TestBackfillInfer:
             [
                 "backfill",
                 "infer",
-                "--archive",
+                "--archive-root",
                 str(half_placed),
                 "--write",
             ],
@@ -443,7 +462,7 @@ class TestBackfillInfer:
         THEN:  it says what it would do and nothing changes
         """
         result = runner.invoke(
-            main, ["backfill", "infer", "--archive", str(half_placed)]
+            main, ["backfill", "infer", "--archive-root", str(half_placed)]
         )
 
         check.is_in("would be placed", result.output)
@@ -464,7 +483,7 @@ class TestBackfillInfer:
         rest is what a person is for, and has to be visible.
         """
         result = runner.invoke(
-            main, ["backfill", "infer", "--archive", str(half_placed)]
+            main, ["backfill", "infer", "--archive-root", str(half_placed)]
         )
 
         check.is_in("VAN", result.output)
@@ -508,7 +527,7 @@ class TestBackfillInfer:
                 objects=[b.flight(frm="Narita", to="Seattle", placed=False)],
             ),
         )
-        infer = ["backfill", "infer", "--archive", str(archive_root)]
+        infer = ["backfill", "infer", "--archive-root", str(archive_root)]
 
         refused = runner.invoke(main, infer)
         allowed = runner.invoke(main, [*infer, "--disagree-km", "100"])
@@ -535,7 +554,7 @@ class TestBackfillInfer:
         archive_root = staged(b.trip(name="Rail trip", objects=[b.rail()]))
 
         result = runner.invoke(
-            main, ["backfill", "infer", "--archive", str(archive_root)]
+            main, ["backfill", "infer", "--archive-root", str(archive_root)]
         )
 
         check.is_in("nothing carries a code", result.output)

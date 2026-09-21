@@ -58,9 +58,10 @@ uv run tripsy-exim list
 `list` should now show every trip in your history, oldest first, with a
 blank mark in the first column meaning "not uploaded".
 
-This reads the file and writes canonical objects to
-`~/.local/share/tripsy-exim/archive` (or `$TRIPSY_EXIM_ARCHIVE`). It
-touches no network. Re-running it is always safe: the same source
+This reads the file and writes canonical objects into the staging
+archive called `staged`, under `~/.local/share/tripsy-exim` (or
+`$TRIPSY_EXIM_ARCHIVE`). Pass `--archive NAME` to keep a run in an
+archive of its own. It touches no network. Re-running it is always safe: the same source
 produces the same objects, so a second run rewrites rather than
 duplicates.
 
@@ -240,7 +241,7 @@ $ tripsy-exim stage-export export.json
   txim-tripit-json-g01-2440a45af136ce56 (1 hostings, 1 transportations)
   txim-tripit-json-g01-7748bce735ae9e27 (1 activities, 1 transportations)
 
-2 trips, 4 objects into archive
+2 trips, 4 objects into archive/staged/staged
   1 activities, 1 hostings, 2 transportations
 
 $ tripsy-exim list

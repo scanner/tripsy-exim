@@ -22,7 +22,12 @@ from pytest_mock import MockerFixture
 # Project imports
 from tests import tripit_builder as b
 from tripsy_exim.cli import main
-from tripsy_exim.store import ARCHIVE_ENV, Archive
+from tripsy_exim.store import (
+    ARCHIVE_ENV,
+    DEFAULT_ARCHIVE,
+    Archive,
+    staged_path,
+)
 
 
 ########################################################################
@@ -54,7 +59,8 @@ class TestArchiveResolution:
         export = write_export(b.trip(objects=[b.flight()]))
         archive_root = tmp_path / "named-by-dotenv"
         runner.invoke(
-            main, ["stage-export", str(export), "--archive", str(archive_root)]
+            main,
+            ["stage-export", str(export), "--archive-root", str(archive_root)],
         )
 
         project = tmp_path / "project"
@@ -78,7 +84,7 @@ class TestArchiveResolution:
         write_export: Callable[..., Path],
     ) -> None:
         """
-        GIVEN: an archive path written with a leading ~
+        GIVEN: an archive root written with a leading ~
         WHEN:  a command resolves it
         THEN:  it lands under the home directory
 
@@ -95,8 +101,62 @@ class TestArchiveResolution:
 
         check.equal(result.exit_code, 0, result.output)
         check.is_true(
-            (home / "Documents" / "tripsy-archive" / "trips").is_dir(),
+            staged_path(home / "Documents" / "tripsy-archive", DEFAULT_ARCHIVE)
+            .joinpath("trips")
+            .is_dir(),
             "staged under the expanded path",
+        )
+
+    ####################################################################
+    #
+    def test_the_name_picks_which_archive_a_command_works_on(
+        self, runner: CliRunner, staged: Callable[..., Path]
+    ) -> None:
+        """
+        GIVEN: two staging archives under one root
+        WHEN:  a command names one of them
+        THEN:  it sees that one's trips and not the other's
+
+        The whole point of naming archives: one root can hold the TripIt
+        import and a separate scratch archive without either being able
+        to see the other.
+        """
+        root = staged(b.trip(name="In the default one"))
+        staged(b.trip(name="In the other one"), archive="scratch")
+
+        listed = runner.invoke(
+            main, ["list", "--archive-root", str(root), "--archive", "scratch"]
+        )
+
+        check.equal(listed.exit_code, 0, listed.output)
+        check.is_in("In the other one", listed.output)
+        check.is_not_in("In the default one", listed.output)
+
+    ####################################################################
+    #
+    def test_a_name_that_is_not_a_directory_component_is_refused(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """
+        GIVEN: an archive name the store will not accept
+        WHEN:  a command resolves it
+        THEN:  it is reported as an error, not raised
+
+        Which names are refused is settled in the store and tested
+        there.  What is this layer's is the translation: the store
+        raises ValueError, and a person running a command has to see a
+        message saying what a usable name looks like rather than a
+        traceback.
+        """
+        result = runner.invoke(
+            main,
+            ["list", "--archive-root", str(tmp_path), "--archive", "../up"],
+        )
+
+        check.not_equal(result.exit_code, 0)
+        check.is_in("not a usable archive name", result.output)
+        check.is_not_instance(
+            result.exception, ValueError, "reported, not raised"
         )
 
     ####################################################################
@@ -147,7 +207,7 @@ class TestArchiveResolution:
         becomes a message.
         """
         root = tmp_path / "locked"
-        (root / "trips").mkdir(parents=True)
+        staged_path(root, DEFAULT_ARCHIVE).joinpath("trips").mkdir(parents=True)
         environment[ARCHIVE_ENV] = str(root)
         mocker.patch.object(
             Archive,

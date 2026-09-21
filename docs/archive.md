@@ -7,10 +7,14 @@ over it
 
 ## DESCRIPTION
 
-Every command reads or writes one directory: the archive. It holds the
+Every command reads or writes one staging archive. It holds the
 canonical form of every trip staged from a source, the corrections made
 to them, and a record of what has been uploaded and what Tripsy called
 it.
+
+Staging archives are named, and several can live side by side -- the
+TripIt import in one, a scratch archive in another. A command works on
+the one `--archive` names, or on `staged` when it names none.
 
 The archive is not a cache. It is the provider-neutral copy of the data
 -- the reason for the project's second half -- so it is kept in durable
@@ -24,17 +28,60 @@ separately, and are applied on the way out to Tripsy.
 
 ## LOCATION
 
-First match wins:
+One root holds every archive this tool keeps, of two kinds:
 
-1. `--archive DIRECTORY` on any command
+```text
+<root>/
+  staged/<name>/                 staging archives; the default is 'staged'
+  exports/<stamp>/               one directory per export run
+```
+
+An export is a different shape -- a document per trip rather than a file
+per object -- and is documented with the command that writes it. The rest
+of this page is about a staging archive.
+
+For the root, first match wins:
+
+1. `--archive-root DIRECTORY` on any command
 2. `$TRIPSY_EXIM_ARCHIVE`
-3. `$XDG_DATA_HOME/tripsy-exim/archive`, or
-   `~/.local/share/tripsy-exim/archive`
+3. `$XDG_DATA_HOME/tripsy-exim`, or `~/.local/share/tripsy-exim`
+
+### Moving an archive made before the split
+
+An archive made when the root *was* the archive has to be moved down a
+level. It cannot be moved into itself, so it goes aside first:
+
+```sh
+ROOT="$TRIPSY_EXIM_ARCHIVE"          # or ~/.local/share/tripsy-exim
+mv "$ROOT" "$ROOT.moving"
+mkdir -p "$ROOT/staged"
+mv "$ROOT.moving" "$ROOT/staged/staged"
+```
+
+Until that is done every command reports `no archive directory at
+<root>/staged/staged`, naming a path that has never existed. Nothing is
+lost by waiting: the move is the whole migration, and an archive's own
+contents are unchanged by it.
+
+## NAMING AN ARCHIVE
+
+`--archive NAME` picks which staging archive under the root. A name is a
+single directory component: letters, digits, `.`, `-` and `_`. Runs of
+whitespace become one `_`, so `--archive 'old import'` and
+`--archive old_import` are the same archive; anything else is refused
+rather than quietly repaired, since a silently renamed archive is how two
+of them end up on disk.
+
+Accented and non-Latin names are refused for a narrower reason. macOS
+normalises filenames, so a name typed with a combining accent and the
+same name typed precomposed do not find each other again -- and an
+archive name is retyped on every later command. Trip directories inside
+an export carry no such restriction: nothing retypes those.
 
 ## LAYOUT
 
 ```text
-<archive>/
+<root>/staged/<name>/
   manifest.json                  what has been uploaded, and its Tripsy ids
   trips/
     <trip key>/
@@ -165,7 +212,6 @@ Overrides are applied on the way out, during `upload`, and nowhere else.
 | `identifier_cache` | `internal_identifier` to the numeric Tripsy id it was given, so an uploaded object can be read back without searching. |
 | `uploaded_trips` | Trip key to when a run finished uploading it. This is what `list` marks and what `upload` steps over. |
 | `merged_trips` | Absorbed trip key to the trip it uploads into. See [merge(1)](merge.md). |
-| `last_export_at` | Written by `record_export`, read by nothing. The export side was going to be incremental; it takes a complete dated snapshot instead, which consults no watermark. |
 
 Deleting the manifest does not lose trip data, but it does lose the
 knowledge of what was already uploaded -- which is harmless, since a

@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim stage [--archive DIRECTORY] [--namespace TEXT] [--scratch]
+tripsy-exim stage [--archive NAME] [--namespace TEXT] [--scratch]
                   SOURCES...
 ```
 
@@ -37,9 +37,13 @@ refused rather than staged a second time.
 
 ## OPTIONS
 
-`--archive DIRECTORY`
-: Where the canonical objects are written. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the canonical objects are written to. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 `--namespace TEXT`
 : Mint identifiers into this namespace instead of the one the source
@@ -65,7 +69,7 @@ Stage one calendar, then read what the parser could not classify:
 ```sh
 uv run tripsy-exim stage ~/Downloads/tripit/Lakeside-2012.ics
 jq '.unclassified[] | {summary, reason}' \
-   "$TRIPSY_EXIM_ARCHIVE"/trips/txim-ics-g01-*/report.json
+   "$TRIPSY_EXIM_ARCHIVE"/staged/staged/trips/txim-ics-g01-*/report.json
 ```
 
 Stage a shelf of calendars into a throwaway namespace first, to see what

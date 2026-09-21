@@ -15,7 +15,7 @@ from tests import tripit_builder as b
 from tests.cli.conftest import EARLIER, KYOTO_TRIP, LATER, OSAKA_TRIP
 from tripsy_exim.cli import main
 from tripsy_exim.secrets import SECRET_URL_ENV
-from tripsy_exim.store import Archive
+from tripsy_exim.store import DEFAULT_ARCHIVE, Archive, staged_path
 from tripsy_exim.sync.importer import in_travel_order, mark_uploaded
 
 
@@ -46,7 +46,9 @@ class TestUploadCommand:
 
         archive_root = staged()
 
-        result = runner.invoke(main, ["upload", "--archive", str(archive_root)])
+        result = runner.invoke(
+            main, ["upload", "--archive-root", str(archive_root)]
+        )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("Dry run", result.output)
@@ -62,10 +64,10 @@ class TestUploadCommand:
         WHEN:  upload is run
         THEN:  it fails saying so, rather than reporting a run of nothing
         """
-        empty = tmp_path / "archive"
-        empty.mkdir()
+        root = tmp_path / "archive"
+        staged_path(root, DEFAULT_ARCHIVE).mkdir(parents=True)
 
-        result = runner.invoke(main, ["upload", "--archive", str(empty)])
+        result = runner.invoke(main, ["upload", "--archive-root", str(root)])
 
         check.not_equal(result.exit_code, 0)
         check.is_in("no staged trips", result.output)
@@ -89,7 +91,7 @@ class TestUploadCommand:
 
         result = runner.invoke(
             main,
-            ["upload", "--archive", str(archive_root), "--trip", "kyoto"],
+            ["upload", "--archive-root", str(archive_root), "--trip", "kyoto"],
         )
 
         check.equal(result.exit_code, 0, result.output)
@@ -117,7 +119,7 @@ class TestUploadCommand:
 
         result = runner.invoke(
             main,
-            ["upload", "--archive", str(archive_root), "--trip", "japan"],
+            ["upload", "--archive-root", str(archive_root), "--trip", "japan"],
         )
 
         check.not_equal(result.exit_code, 0)
@@ -142,7 +144,8 @@ class TestUploadCommand:
         archive_root = staged(*dated_pair)
 
         result = runner.invoke(
-            main, ["upload", "--archive", str(archive_root), "--limit", "1"]
+            main,
+            ["upload", "--archive-root", str(archive_root), "--limit", "1"],
         )
 
         check.equal(result.exit_code, 0, result.output)
@@ -156,6 +159,7 @@ class TestUploadCommand:
         runner: CliRunner,
         staged: Callable[..., Path],
         dated_pair: tuple[dict, dict],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: an archive whose oldest trip a run already finished
@@ -167,12 +171,13 @@ class TestUploadCommand:
         """
         archive_root = staged(*dated_pair)
 
-        archive = Archive(archive_root)
+        archive = opened(archive_root)
         oldest = in_travel_order(archive, archive.trip_keys())[0]
         mark_uploaded(archive, oldest)
 
         result = runner.invoke(
-            main, ["upload", "--archive", str(archive_root), "--limit", "1"]
+            main,
+            ["upload", "--archive-root", str(archive_root), "--limit", "1"],
         )
 
         check.equal(result.exit_code, 0, result.output)
@@ -204,7 +209,7 @@ class TestUploadCommand:
         )
 
         result = runner.invoke(
-            main, ["upload", "--archive", str(archive_root), "--write"]
+            main, ["upload", "--archive-root", str(archive_root), "--write"]
         )
 
         check.not_equal(result.exit_code, 0)
