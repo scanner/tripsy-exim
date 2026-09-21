@@ -132,6 +132,18 @@ refused, because they were never candidates.
 **The commonest position, not the first**, so one odd record cannot move
 an airport.
 
+**A code that names a metropolitan area is refused outright.** `TYO` is
+Narita and Haneda, sixty kilometres apart; `OSA` is Kansai and Itami.
+These cannot be left to the agreement guard below, which only fires on a
+code the archive places more than once -- a metropolitan code seen a
+single time would otherwise be copied to whichever airport that one
+record happened to use. Right city, wrong airport, and silent about it.
+
+The list is a floor rather than a complete set: booking systems carry
+codes no standard agrees on. `QSF` is the San Francisco Bay Area in
+Sabre and ITA, and an airport in Algeria to everyone else. The guard
+below is what catches the rest.
+
 **A code observed in places far apart is refused**, not averaged. The
 modal rule protects against a stray record; it does nothing about a code
 genuinely used for two places, which is the realistic hazard.

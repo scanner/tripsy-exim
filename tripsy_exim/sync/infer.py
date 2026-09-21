@@ -95,7 +95,53 @@ DISAGREE_KM = 10.0
 # data.
 #
 NOTHING_PLACES_IT = "nothing else in the archive places this"
+NAMES_A_REGION = "names a metropolitan area rather than one airport"
 SEGMENTS_DISAGREE = "segments disagree about where this is"
+
+# Codes that name a metropolitan area rather than an airport.  TYO is
+# Narita and Haneda, sixty kilometres apart; OSA is Kansai and Itami.
+#
+# These have to be refused by name rather than left to the agreement
+# guard, which only fires on a code the archive places more than once.
+# A metropolitan code seen a single time would otherwise be copied to
+# whichever airport that one record happened to use -- a pin in the
+# right city and the wrong airport, which is precisely the quiet kind of
+# wrong this command exists to avoid.
+#
+# From Wikivoyage's list of metropolitan area airport codes.  Booking
+# systems carry others that no standard agrees on -- QSF is the San
+# Francisco Bay Area in Sabre and ITA, and an airport in Algeria
+# elsewhere -- so this is a floor rather than a complete set, with the
+# agreement guard behind it.
+#
+METRO_CODES = frozenset(
+    {
+        "BJS",
+        "BUE",
+        "BUH",
+        "CHI",
+        "DTT",
+        "EAP",
+        "JKT",
+        "LON",
+        "MIL",
+        "MOW",
+        "NYC",
+        "OSA",
+        "PAR",
+        "RIO",
+        "ROM",
+        "SAO",
+        "SEL",
+        "SPK",
+        "STO",
+        "TYO",
+        "VIZ",
+        "WAS",
+        "YMQ",
+        "YTO",
+    }
+)
 
 Position = tuple[float, float]
 
@@ -243,6 +289,12 @@ def inferences(
                 continue
             key = exact_key(gap.label)
             if key is None:
+                continue
+
+            if key in METRO_CODES:
+                found.append(
+                    Inference(gap=gap, key=key, refusal=NAMES_A_REGION)
+                )
                 continue
 
             position, agreed, refusal = settle(known.get(key, []), disagree_km)

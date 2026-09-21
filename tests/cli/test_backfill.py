@@ -21,7 +21,7 @@ from click.testing import CliRunner
 
 # Project imports
 from tests import tripit_builder as b
-from tests.places import HND, NRT
+from tests.places import HND, NRT, SEA
 from tripsy_exim.cli import main
 
 # The trip the unplaceable fixtures stage, named so a test reading the
@@ -489,19 +489,23 @@ class TestBackfillInfer:
         archive_root = staged(
             b.trip(
                 name="Through Narita",
-                objects=[b.flight(frm="Narita", to="Osaka", frm_at=NRT)],
+                objects=[
+                    b.flight(frm="Narita", to="Seattle", frm_at=NRT, to_at=SEA)
+                ],
             ),
             b.trip(
                 name="Through the other one",
                 start="2024-06-01",
                 end="2024-06-04",
-                objects=[b.flight(frm="Narita", to="Osaka", frm_at=HND)],
+                objects=[
+                    b.flight(frm="Narita", to="Seattle", frm_at=HND, to_at=SEA)
+                ],
             ),
             b.trip(
                 name=NARITA_TRIP,
                 start="2024-08-01",
                 end="2024-08-04",
-                objects=[b.flight(frm="Narita", to="Osaka", placed=False)],
+                objects=[b.flight(frm="Narita", to="Seattle", placed=False)],
             ),
         )
         infer = ["backfill", "infer", "--archive", str(archive_root)]
@@ -509,7 +513,7 @@ class TestBackfillInfer:
         refused = runner.invoke(main, infer)
         allowed = runner.invoke(main, [*infer, "--disagree-km", "100"])
 
-        # OSA is placed either way; NAR is the one that moves.
+        # SEA is placed either way; NAR is the one that moves.
         #
         check.is_in("disagree about where this is", refused.output)
         check.is_in("1 would be placed, 1 refused", refused.output)

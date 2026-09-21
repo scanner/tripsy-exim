@@ -19,4 +19,5 @@ described in [README.md](README.md).
   `backfill apply` reads it back as corrections.
 - `backfill infer` places an endpoint from an airport code the archive
   already positions elsewhere, refusing a code that names two places
-  -- two airports serving one city, say.
+  -- two airports serving one city, say, or a code like `TYO` that
+  names a metropolitan area rather than an airport.

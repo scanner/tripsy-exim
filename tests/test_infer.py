@@ -22,10 +22,11 @@ from tests.places import (
     HND,
     KIX,
     NRT,
-    ONE_BAY,
+    QSF,
     SFO,
     SFO_CENTROID,
     SFO_RUNWAY,
+    TYO,
     YVR,
 )
 from tripsy_exim.store import Archive
@@ -33,6 +34,8 @@ from tripsy_exim.sync import stage_export
 from tripsy_exim.sync.backfill import gaps
 from tripsy_exim.sync.infer import (
     DISAGREE_KM,
+    METRO_CODES,
+    NAMES_A_REGION,
     NOTHING_PLACES_IT,
     SEGMENTS_DISAGREE,
     Position,
@@ -188,9 +191,9 @@ class TestSettle:
     @pytest.mark.parametrize(
         "pair,apart_km",
         [
-            ((ONE_BAY[0], ONE_BAY[1]), 17),
-            ((ONE_BAY[1], ONE_BAY[2]), 47),
-            ((ONE_BAY[0], ONE_BAY[2]), 49),
+            ((QSF[0], QSF[1]), 17),
+            ((QSF[1], QSF[2]), 47),
+            ((QSF[0], QSF[2]), 49),
         ],
         ids=["SFO-OAK", "OAK-SJC", "SFO-SJC"],
     )
@@ -311,6 +314,79 @@ class TestInferences:
         check.equal(len(answered), 1)
         check.equal(answered[0].key, "NAR")
         check.equal(answered[0].position, NRT)
+
+    ####################################################################
+    #
+    def test_a_metropolitan_code_is_refused_even_when_placed_once(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: one trip recording OSA at Kansai, another naming OSA
+               with nothing placing it
+        WHEN:  the archive is asked what it can work out
+        THEN:  it is refused for naming a region, not copied
+
+        The case the agreement guard cannot reach.  It only fires on a
+        code the archive places more than once, so a metropolitan code
+        seen a single time would be copied to whichever airport that one
+        record happened to use.  OSA is Kansai and Itami; right city,
+        wrong airport, and silent about it.
+        """
+        stage_export(
+            archive,
+            b.export(
+                b.trip(
+                    name="Recorded at Kansai",
+                    objects=[b.flight(frm="Osaka", to="Seattle", frm_at=KIX)],
+                ),
+                b.trip(
+                    name="Unplaced",
+                    start="2024-08-01",
+                    end="2024-08-04",
+                    objects=[b.flight(frm="Osaka", to="Seattle", placed=False)],
+                ),
+            ),
+        )
+
+        found = inferences(archive, archive.trip_keys())
+
+        osaka = [i for i in found if i.key == "OSA"]
+        check.equal(len(osaka), 1)
+        check.is_false(osaka[0].answered)
+        check.equal(osaka[0].refusal, NAMES_A_REGION)
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize("code", ["TYO", "OSA", "NYC", "LON"])
+    def test_known_metropolitan_codes_are_listed(self, code: str) -> None:
+        """
+        GIVEN: a code that names a metropolitan area
+        WHEN:  the known set is consulted
+        THEN:  it is in it
+
+        A floor rather than a complete set -- booking systems carry
+        codes no standard agrees on -- with the agreement guard behind
+        it for the rest.
+        """
+        check.is_in(code, METRO_CODES)
+
+    ####################################################################
+    #
+    def test_the_two_airports_a_metropolitan_code_covers_disagree(
+        self,
+    ) -> None:
+        """
+        GIVEN: the two airports TYO covers
+        WHEN:  their positions are settled
+        THEN:  they are refused as one place
+
+        Why the code cannot be placed at all: Narita and Haneda are
+        sixty kilometres apart, so there is no single answer to give.
+        """
+        position, _, refusal = settle(list(TYO))
+
+        check.is_none(position)
+        check.is_in(SEGMENTS_DISAGREE, refusal)
 
     ####################################################################
     #

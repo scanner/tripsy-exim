@@ -25,16 +25,26 @@ HND = (35.5494, 139.7798)
 KIX = (34.43533, 135.243977)
 NRT = (35.7719808, 140.3928501)
 OAK = (37.7126, -122.2197)
+SEA = (47.4502, -122.3088)
 SFO = (37.6213, -122.3790)
 SJC = (37.3639, -121.9289)
 YVR = (49.1947, -123.1792)
 
-# The three airports serving one bay, and the tightest real test of any
-# guard that has to tell one airport from the next: SFO to OAK is 17km,
-# OAK to SJC 47km, SFO to SJC 49km.  Every pair of them sits inside
-# fifty kilometres.
+# The three airports one metropolitan code covers, and the tightest real
+# test of any guard that has to tell one airport from the next: SFO to
+# OAK is 17km, OAK to SJC 47km, SFO to SJC 49km.  Every pair of them
+# sits inside fifty kilometres.
 #
-ONE_BAY = (SFO, OAK, SJC)
+# QSF is the San Francisco Bay Area in Sabre and ITA -- and Ain Arnat
+# Airport in Setif, Algeria, to everyone else.  One code, two continents:
+# the hazard `infer` refuses, in a single example.
+#
+QSF = (SFO, OAK, SJC)
+
+# The two airports TYO covers, far enough apart to settle any argument
+# about whether a metropolitan code names one place.
+#
+TYO = (NRT, HND)
 
 # SFO as other sources publish it -- the centroid, and a runway rather
 # than the terminal.  Around a kilometre and a half from `SFO`, which is
