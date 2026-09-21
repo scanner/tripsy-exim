@@ -8,7 +8,16 @@ because any Tripsy response can be partial.  A file therefore accumulates
 the union of everything ever seen about an object, and a restricted export
 cannot erase what a fuller one captured.
 
-Layout under the archive root:
+One archive root holds every archive this tool keeps, of two kinds:
+
+    <root>/staged/<name>/      staging archives; the default name is 'staged'
+    <root>/exports/<stamp>/    one directory per export run
+
+A staging archive is what this module builds.  Exports are a different
+shape -- a document per trip rather than a file per object -- and belong
+to the exporter.
+
+Layout under one staging archive:
 
     manifest.json
     trips/<trip key>/trip.json
@@ -70,9 +79,28 @@ COLLECTIONS: dict[type[CanonicalModel], str] = {
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
-# Names the archive directory when no flag does.
+# Names the archive root when no flag does.
 #
 ARCHIVE_ENV = "TRIPSY_EXIM_ARCHIVE"
+
+# The two kinds of archive, each under its own directory of the root, so
+# a staging archive can be named anything without ever colliding with a
+# timestamp.
+#
+STAGED_DIR = "staged"
+EXPORTS_DIR = "exports"
+
+# The staging archive a command works on when none is named.
+#
+DEFAULT_ARCHIVE = "staged"
+
+# A staging archive's name becomes a directory name, so it is held to
+# what is safe in one everywhere.  Spaces are translated rather than
+# refused; anything else is refused rather than translated, because
+# silently renaming the archive somebody asked for is how two of them
+# end up on disk.
+#
+_SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
 M = TypeVar("M", bound=CanonicalModel)
 
@@ -81,7 +109,7 @@ M = TypeVar("M", bound=CanonicalModel)
 #
 def default_root() -> Path:
     """
-    Where the archive lives when nothing names a directory.
+    Where the archive root lives when nothing names a directory.
 
     `TRIPSY_EXIM_ARCHIVE` overrides it, and a command line flag overrides
     that.  The fallback follows the XDG base directory specification, so
@@ -90,7 +118,7 @@ def default_root() -> Path:
     artefact.
 
     Returns:
-        The directory the archive is read from and written to.
+        The directory holding the staging archives and the exports.
     """
     configured = os.environ.get(ARCHIVE_ENV)
     if configured:
@@ -102,7 +130,73 @@ def default_root() -> Path:
         if data_home
         else Path.home() / ".local" / "share"
     )
-    return base / "tripsy-exim" / "archive"
+    return base / "tripsy-exim"
+
+
+####################################################################
+#
+def archive_name(value: str) -> str:
+    """
+    Normalise a staging archive's name to a directory-safe one.
+
+    Runs of whitespace become a single underscore, since a name with a
+    space in it is a reasonable thing to type and an unreasonable thing
+    to quote on every later command.
+
+    Args:
+        value: The name as given.
+
+    Returns:
+        The name as a directory component.
+
+    Raises:
+        ValueError: The name is empty, carries a character that has no
+            place in a path, or is a relative path component.
+    """
+    name = "_".join(value.split())
+    if not name or name in (".", "..") or not _SAFE_NAME.fullmatch(name):
+        raise ValueError(
+            f"{value!r} is not a usable archive name: letters, digits, "
+            "'.', '-' and '_' only"
+        )
+    return name
+
+
+####################################################################
+#
+def staged_path(root: Path, name: str) -> Path:
+    """
+    Where one named staging archive lives.
+
+    The name is normalised here rather than by the caller, so there is
+    no way to reach a directory this module would not have named.
+
+    Args:
+        root: The archive root.
+        name: The archive's name, as a person gave it.
+
+    Returns:
+        The directory that archive is read from and written to.
+
+    Raises:
+        ValueError: The name has no place in a path.
+    """
+    return root / STAGED_DIR / archive_name(name)
+
+
+####################################################################
+#
+def exports_path(root: Path) -> Path:
+    """
+    Where exports accumulate.
+
+    Args:
+        root: The archive root.
+
+    Returns:
+        The directory holding one subdirectory per export run.
+    """
+    return root / EXPORTS_DIR
 
 
 ####################################################################
@@ -434,7 +528,6 @@ class Archive:
         if not self.manifest_path.is_file():
             return {
                 "schema_version": ARCHIVE_SCHEMA_VERSION,
-                "last_export_at": None,
                 "identifier_cache": {},
             }
         result: dict[str, Any] = json.loads(
@@ -449,34 +542,6 @@ class Archive:
         manifest = {**manifest, "schema_version": ARCHIVE_SCHEMA_VERSION}
         write_json(self.manifest_path, manifest)
         return self.manifest_path
-
-    ####################################################################
-    #
-    def record_export(self, started_at: datetime | None = None) -> Path:
-        """
-        Advance the export watermark.
-
-        The watermark is wall-clock time because trips carry no
-        `updated_at` to compute it from.  It is the time the run *started*,
-        so a change made while the run was in flight is caught by the next
-        one rather than missed.
-
-        Nothing reads this yet, and the export as designed never will: it
-        writes a complete dated snapshot, which needs no watermark.  Kept
-        until the exporter lands and can say whether it wants the field.
-
-        Args:
-            started_at: When the run began.  Defaults to now.
-
-        Returns:
-            The manifest path.
-        """
-        when = started_at or datetime.now(UTC)
-        manifest = self.read_manifest()
-        manifest["last_export_at"] = when.astimezone(UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        return self.write_manifest(manifest)
 
 
 ####################################################################

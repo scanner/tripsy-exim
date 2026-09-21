@@ -34,6 +34,7 @@ class TestStageExport:
         tmp_path: Path,
         write_export: Callable[..., Path],
         named_pair: tuple[dict, dict],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: an export carrying two trips
@@ -45,11 +46,11 @@ class TestStageExport:
 
         result = runner.invoke(
             main,
-            ["stage-export", str(export), "--archive", str(archive_root)],
+            ["stage-export", str(export), "--archive-root", str(archive_root)],
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.equal(len(Archive(archive_root).trip_keys()), 2)
+        check.equal(len(opened(archive_root).trip_keys()), 2)
         check.is_in("2 trips", result.output)
 
     ####################################################################
@@ -59,6 +60,7 @@ class TestStageExport:
         runner: CliRunner,
         tmp_path: Path,
         write_export: Callable[..., Path],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: an export and the --scratch flag
@@ -73,7 +75,7 @@ class TestStageExport:
             [
                 "stage-export",
                 str(export),
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--scratch",
             ],
@@ -81,7 +83,7 @@ class TestStageExport:
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("scratch namespace:", result.output)
-        keys = Archive(archive_root).trip_keys()
+        keys = opened(archive_root).trip_keys()
         check.equal(len(keys), 1)
         check.is_in("scratch", keys[0])
 
@@ -111,7 +113,7 @@ class TestStageExport:
             [
                 command,
                 str(source),
-                "--archive",
+                "--archive-root",
                 str(archive_root),
                 "--namespace",
                 "chosen",
@@ -141,7 +143,7 @@ class TestStageExport:
             [
                 "stage-export",
                 str(path),
-                "--archive",
+                "--archive-root",
                 str(tmp_path / "archive"),
             ],
         )
@@ -159,7 +161,11 @@ class TestStage:
     ####################################################################
     #
     def test_stages_a_calendar(
-        self, runner: CliRunner, tmp_path: Path, faker: Faker
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        faker: Faker,
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: one synthetic .ics calendar
@@ -172,8 +178,8 @@ class TestStage:
 
         result = runner.invoke(
             main,
-            ["stage", str(source), "--archive", str(archive_root)],
+            ["stage", str(source), "--archive-root", str(archive_root)],
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.equal(len(Archive(archive_root).trip_keys()), 1)
+        check.equal(len(opened(archive_root).trip_keys()), 1)

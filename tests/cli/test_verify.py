@@ -45,6 +45,7 @@ class TestVerifyCommand:
         dated_pair: tuple[dict, dict],
         environment: MutableMapping[str, str],
         mocker: MockerFixture,
+        opened: Callable[[Path], Archive],
     ) -> Callable[..., tuple[Path, list[str]]]:
         """
         Two uploaded trips, with Tripsy stubbed out.
@@ -66,7 +67,7 @@ class TestVerifyCommand:
 
         def make(*results: TripCheck) -> tuple[Path, list[str]]:
             archive_root = staged(*dated_pair)
-            archive = Archive(archive_root)
+            archive = opened(archive_root)
             keys = in_travel_order(archive, archive.trip_keys())
             for key in keys:
                 mark_uploaded(archive, key)
@@ -100,7 +101,9 @@ class TestVerifyCommand:
         """
         archive_root = staged()
 
-        result = runner.invoke(main, ["verify", "--archive", str(archive_root)])
+        result = runner.invoke(
+            main, ["verify", "--archive-root", str(archive_root)]
+        )
 
         check.not_equal(result.exit_code, 0)
         check.is_in("no trips have been uploaded", result.output)
@@ -119,7 +122,9 @@ class TestVerifyCommand:
         """
         archive_root, _ = checked()
 
-        result = runner.invoke(main, ["verify", "--archive", str(archive_root)])
+        result = runner.invoke(
+            main, ["verify", "--archive-root", str(archive_root)]
+        )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("[ok]", result.output)
@@ -162,7 +167,9 @@ class TestVerifyCommand:
             )
         )
 
-        result = runner.invoke(main, ["verify", "--archive", str(archive_root)])
+        result = runner.invoke(
+            main, ["verify", "--archive-root", str(archive_root)]
+        )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("[DIFFERS]", result.output)
@@ -206,7 +213,7 @@ class TestVerifyCommand:
         )
 
         result = runner.invoke(
-            main, ["verify", "--archive", str(archive_root), *extra_args]
+            main, ["verify", "--archive-root", str(archive_root), *extra_args]
         )
 
         check.equal(result.exit_code, 0, result.output)
@@ -239,7 +246,9 @@ class TestVerifyCommand:
             )
         )
 
-        result = runner.invoke(main, ["verify", "--archive", str(archive_root)])
+        result = runner.invoke(
+            main, ["verify", "--archive-root", str(archive_root)]
+        )
 
         check.equal(result.exit_code, 0, result.output)
         check.is_in("1 addresses not yet placed", result.output)
@@ -263,7 +272,8 @@ class TestVerifyCommand:
         archive_root, keys = checked()
 
         result = runner.invoke(
-            main, ["verify", "--archive", str(archive_root), "--limit", "1"]
+            main,
+            ["verify", "--archive-root", str(archive_root), "--limit", "1"],
         )
 
         check.equal(result.exit_code, 0, result.output)

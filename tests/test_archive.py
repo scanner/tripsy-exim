@@ -5,7 +5,6 @@
 # system imports
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -19,8 +18,12 @@ from faker import Faker
 from tripsy_exim.models import Activity, Collaborator, Expense, Hosting, Trip
 from tripsy_exim.store import (
     ARCHIVE_SCHEMA_VERSION,
+    EXPORTS_DIR,
     Archive,
+    archive_name,
+    exports_path,
     local_key,
+    staged_path,
     write_json,
 )
 
@@ -452,8 +455,99 @@ class TestUnchangedWrites:
 ########################################################################
 ########################################################################
 #
+class TestArchiveLayout:
+    """Tests for where the two kinds of archive live under one root."""
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "given,expected",
+        [
+            ("staged", "staged"),
+            ("tripit-2019", "tripit-2019"),
+            ("a.b_c", "a.b_c"),
+            ("my archive", "my_archive"),
+            ("  padded  ", "padded"),
+            ("many   spaces   here", "many_spaces_here"),
+            ("tab\tseparated", "tab_separated"),
+        ],
+    )
+    def test_a_name_becomes_a_directory_component(
+        self, given: str, expected: str
+    ) -> None:
+        """
+        GIVEN: an archive name as somebody would type it
+        WHEN:  it is normalised
+        THEN:  it is a single directory component
+
+        A name with a space in it is a reasonable thing to type and an
+        unreasonable thing to quote on every later command, so runs of
+        whitespace are translated rather than refused.
+        """
+        check.equal(archive_name(given), expected)
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "given",
+        ["", "   ", ".", "..", "a/b", "../escape", "cafe\u0301"],
+        ids=[
+            "empty",
+            "blank",
+            "dot",
+            "dotdot",
+            "nested",
+            "traversal",
+            "combining",
+        ],
+    )
+    def test_a_name_that_is_not_a_component_is_refused(
+        self, given: str
+    ) -> None:
+        """
+        GIVEN: a name that is empty, a path, or not plain ASCII
+        WHEN:  it is normalised
+        THEN:  it is refused rather than quietly repaired
+
+        Refused rather than sanitised, because silently renaming the
+        archive somebody asked for is how two of them end up on disk.
+        Non-ASCII is refused for a narrower reason: macOS normalises
+        filenames, so a name typed with a combining accent and the same
+        name typed precomposed would not find each other again.
+        """
+        with pytest.raises(ValueError):
+            archive_name(given)
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "name", [EXPORTS_DIR, "2026-09-21T120000Z"], ids=["exports", "stamp"]
+    )
+    def test_a_staging_archive_cannot_stand_on_the_exports(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        """
+        GIVEN: a staging archive named after the exports directory, or
+               shaped like a run's timestamp
+        WHEN:  it is placed under the root
+        THEN:  it is somewhere no export can be
+
+        This is the whole reason the two kinds have separate parents: a
+        person names a staging archive and an export names itself, so a
+        flat root would eventually have them pick the same name.
+        """
+        archive = staged_path(tmp_path, name)
+        exports = exports_path(tmp_path)
+
+        check.not_equal(archive, exports)
+        check.is_false(archive.is_relative_to(exports))
+
+
+########################################################################
+########################################################################
+#
 class TestManifest:
-    """Tests for the sync manifest and the export watermark."""
+    """Tests for the sync manifest."""
 
     ####################################################################
     #
@@ -461,38 +555,39 @@ class TestManifest:
         self, archive: Archive
     ) -> None:
         """
-        GIVEN: an archive that has never been exported to
+        GIVEN: an archive that has never been written to
         WHEN:  the manifest is read
         THEN:  a usable empty manifest comes back rather than an error
         """
         manifest = archive.read_manifest()
 
-        check.is_none(manifest["last_export_at"], "no watermark yet")
         check.equal(manifest["identifier_cache"], {}, "empty cache")
+        check.equal(
+            manifest["schema_version"],
+            ARCHIVE_SCHEMA_VERSION,
+            "self-describing",
+        )
 
     ####################################################################
     #
-    def test_recording_a_run_advances_the_watermark_and_keeps_the_cache(
+    def test_writing_a_manifest_keeps_the_cache(
         self, archive: Archive, trip: Trip
     ) -> None:
         """
         GIVEN: a manifest carrying a cached identifier mapping
-        WHEN:  a run that began at a known time is recorded
-        THEN:  the watermark is that time in the format updatedSince takes,
-               and the cache is left alone
+        WHEN:  it is written and read back
+        THEN:  the cache survives the round trip
+
+        The cache is what spares an uploaded object a search to find its
+        Tripsy id again, so losing it silently costs a full pass of
+        requests rather than any data.
         """
         cache = {str(trip.internal_identifier): trip.id}
         manifest = archive.read_manifest()
         manifest["identifier_cache"] = cache
         archive.write_manifest(manifest)
 
-        archive.record_export(datetime(2027, 3, 17, 14, 30, tzinfo=UTC))
-
-        stored = archive.read_manifest()
-        check.equal(
-            stored["last_export_at"], "2027-03-17T14:30:00Z", "watermark"
-        )
-        check.equal(stored["identifier_cache"], cache, "cache kept")
+        check.equal(archive.read_manifest()["identifier_cache"], cache)
 
 
 ########################################################################

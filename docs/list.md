@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim list [--archive DIRECTORY] [--pending | --all]
+tripsy-exim list [--archive NAME] [--pending | --all]
 ```
 
 ## RUNNING
@@ -39,9 +39,13 @@ a preview of what `upload --limit N` will take next.
 
 ## OPTIONS
 
-`--archive DIRECTORY`
-: Where the staged trips are read from. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the trips are read from. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 `--pending`
 : List only trips no run has finished uploading.

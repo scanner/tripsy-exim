@@ -30,6 +30,7 @@ class TestListCommand:
         runner: CliRunner,
         staged: Callable[..., Path],
         dated_pair: tuple[dict, dict],
+        opened: Callable[[Path], Archive],
     ) -> None:
         """
         GIVEN: an archive of two trips, the older already uploaded
@@ -38,12 +39,14 @@ class TestListCommand:
                finished one, and --pending shows only what is left
         """
         archive_root = staged(*dated_pair)
-        archive = Archive(archive_root)
+        archive = opened(archive_root)
         mark_uploaded(archive, in_travel_order(archive, archive.trip_keys())[0])
 
-        listed = runner.invoke(main, ["list", "--archive", str(archive_root)])
+        listed = runner.invoke(
+            main, ["list", "--archive-root", str(archive_root)]
+        )
         pending = runner.invoke(
-            main, ["list", "--archive", str(archive_root), "--pending"]
+            main, ["list", "--archive-root", str(archive_root), "--pending"]
         )
 
         check.equal(listed.exit_code, 0, listed.output)

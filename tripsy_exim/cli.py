@@ -15,13 +15,14 @@ memory for the run.
 # system imports
 import os
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 # 3rd party imports
 import click
+from click.decorators import FC
 from dotenv import find_dotenv, load_dotenv
 
 # Project imports
@@ -51,7 +52,14 @@ from tripsy_exim.secrets import (
     SecretStore,
     store_for,
 )
-from tripsy_exim.store import ARCHIVE_ENV, Archive, default_root
+from tripsy_exim.store import (
+    ARCHIVE_ENV,
+    DEFAULT_ARCHIVE,
+    STAGED_DIR,
+    Archive,
+    default_root,
+    staged_path,
+)
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
 from tripsy_exim.sync.backfill import (
     POPULATIONS,
@@ -243,9 +251,54 @@ def plural(count: int, singular: str, suffix: str = "s") -> str:
 
 ####################################################################
 #
-def archive_for(archive_root: Path | None) -> Path:
+def archive_options(purpose: str) -> Callable[[FC], FC]:
     """
-    Settle which directory holds the archive.
+    Attach `--archive` and `--archive-root` to a command.
+
+    Every command settles which archive it works on the same way, so the
+    pair is declared once.  `--archive` names a staging archive; only
+    `--archive-root` takes a path, and most runs never need it.
+
+    Args:
+        purpose: What this command does with the archive.  It becomes
+            the first sentence of `--archive`'s help, so it reads as
+            that command's own.
+
+    Returns:
+        A decorator adding both options to a command.
+    """
+
+    ####################################################################
+    #
+    def attach(command: FC) -> FC:
+        """Wrap one command in both options."""
+        command = click.option(
+            "--archive-root",
+            "archive_root",
+            default=None,
+            type=click.Path(file_okay=False, path_type=Path),
+            help=(
+                "Directory holding the staging archives and the exports.  "
+                f"Defaults to ${ARCHIVE_ENV}, or "
+                "~/.local/share/tripsy-exim."
+            ),
+        )(command)
+        return click.option(
+            "--archive",
+            "archive_name",
+            default=DEFAULT_ARCHIVE,
+            show_default=True,
+            help=f"{purpose}  Named under <root>/{STAGED_DIR}/.",
+        )(command)
+
+    return attach
+
+
+####################################################################
+#
+def archive_for(archive_name: str, archive_root: Path | None) -> Path:
+    """
+    Settle which directory one named staging archive is.
 
     A flag wins, then `TRIPSY_EXIM_ARCHIVE`, then the XDG data
     directory.  A leading `~` is expanded wherever the value came from:
@@ -253,24 +306,35 @@ def archive_for(archive_root: Path | None) -> Path:
     written in `.env` or exported with quotes.
 
     Args:
-        archive_root: The directory named on the command line, or None.
+        archive_name: The archive's name, as given on the command line.
+        archive_root: The root named on the command line, or None.
 
     Returns:
         The directory to read and write.
+
+    Raises:
+        click.ClickException: The name has no place in a path.
     """
-    if archive_root is not None:
-        return Path(archive_root).expanduser()
-    return default_root()
+    root = (
+        Path(archive_root).expanduser()
+        if archive_root is not None
+        else default_root()
+    )
+    try:
+        return staged_path(root, archive_name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 ####################################################################
 #
-def staged_archive(archive_root: Path | None) -> Archive:
+def staged_archive(archive_name: str, archive_root: Path | None) -> Archive:
     """
     Open an archive that is expected to already hold trips.
 
     Args:
-        archive_root: The directory named on the command line, or None.
+        archive_name: The archive's name, as given on the command line.
+        archive_root: The root named on the command line, or None.
 
     Returns:
         The archive.
@@ -280,7 +344,7 @@ def staged_archive(archive_root: Path | None) -> Archive:
             path is named, since it may have come from `.env` or a
             default rather than from the command line.
     """
-    root = archive_for(archive_root)
+    root = archive_for(archive_name, archive_root)
     if not root.is_dir():
         raise click.ClickException(f"no archive directory at {root}")
 
@@ -335,16 +399,7 @@ def resolve_namespace(namespace: str | None, scratch: bool) -> str | None:
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
 )
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the canonical objects are written to.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the canonical objects are written to.")
 @click.option(
     "--namespace",
     default=None,
@@ -361,6 +416,7 @@ def resolve_namespace(namespace: str | None, scratch: bool) -> str | None:
 )
 def stage(
     sources: tuple[Path, ...],
+    archive_name: str,
     archive_root: Path | None,
     namespace: str | None,
     scratch: bool,
@@ -374,8 +430,7 @@ def stage(
     """
     namespace = resolve_namespace(namespace, scratch)
 
-    archive_root = archive_for(archive_root)
-    archive = Archive(archive_root)
+    archive = Archive(archive_for(archive_name, archive_root))
     total = 0
     for source in sources:
         try:
@@ -391,7 +446,7 @@ def stage(
 
     plural = "" if len(sources) == 1 else "s"
     click.echo(
-        f"\n{len(sources)} file{plural}, {total} objects into {archive_root}"
+        f"\n{len(sources)} file{plural}, {total} objects into {archive.root}"
     )
 
 
@@ -402,16 +457,7 @@ def stage(
     "export",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
 )
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the canonical objects are written to.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the canonical objects are written to.")
 @click.option(
     "--namespace",
     default=None,
@@ -428,6 +474,7 @@ def stage(
 )
 def stage_export_command(
     export: Path,
+    archive_name: str,
     archive_root: Path | None,
     namespace: str | None,
     scratch: bool,
@@ -446,8 +493,7 @@ def stage_export_command(
     """
     namespace = resolve_namespace(namespace, scratch)
 
-    archive_root = archive_for(archive_root)
-    archive = Archive(archive_root)
+    archive = Archive(archive_for(archive_name, archive_root))
     try:
         staged = stage_export_file(archive, export, namespace)
     except ValueError as exc:
@@ -469,7 +515,7 @@ def stage_export_command(
         f"{n} {name}" for name, n in sorted(totals.items()) if n
     )
     click.echo(
-        f"\n{len(staged)} trip{plural}, {objects} objects into {archive_root}"
+        f"\n{len(staged)} trip{plural}, {objects} objects into {archive.root}"
     )
     if summary:
         click.echo(f"  {summary}")
@@ -478,29 +524,22 @@ def stage_export_command(
 ####################################################################
 #
 @main.command("list")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--pending/--all",
     default=False,
     help="List only trips no run has finished uploading.",
 )
-def list_command(archive_root: Path | None, pending: bool) -> None:
+def list_command(
+    archive_name: str, archive_root: Path | None, pending: bool
+) -> None:
     """
     List the trips staged in the archive, oldest first.
 
     The mark in the first column says whether a run has finished
     uploading that trip.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
     archive_root = archive.root
     keys = in_travel_order(archive, archive.trip_keys())
     if not keys:
@@ -534,19 +573,11 @@ def list_command(archive_root: Path | None, pending: bool) -> None:
     default=False,
     help="Release ABSORBED so it uploads as its own trip again.",
 )
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 def merge_command(
     absorbed: str,
     target: str | None,
+    archive_name: str,
     archive_root: Path | None,
     undo: bool,
 ) -> None:
@@ -565,7 +596,7 @@ def merge_command(
     Trips are named by key, not by name: the trips this is for share a
     name, which is how they were found in the first place.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if undo:
         try:
@@ -596,16 +627,7 @@ def merge_command(
 ####################################################################
 #
 @main.command("upload")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--trip",
     "wanted",
@@ -647,6 +669,7 @@ def merge_command(
     help="List every object a trip would write, not just the totals.",
 )
 def upload_command(
+    archive_name: str,
     archive_root: Path | None,
     wanted: tuple[str, ...],
     limit: int | None,
@@ -672,7 +695,7 @@ def upload_command(
     Re-running is a no-op rather than a source of duplicates, so a run
     that failed part way is resumed by running it again.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
     archive_root = archive.root
 
     if wanted:
@@ -796,16 +819,7 @@ def upload_command(
 ####################################################################
 #
 @main.command("verify")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--trip",
     "wanted",
@@ -830,6 +844,7 @@ def upload_command(
     help="List every object the account holds that the plan does not.",
 )
 def verify_command(
+    archive_name: str,
     archive_root: Path | None,
     wanted: tuple[str, ...],
     limit: int | None,
@@ -851,7 +866,7 @@ def verify_command(
     opened, and an unplaced leg will not.  `fix-locations` is what places
     the rest.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if wanted:
         try:
@@ -917,16 +932,7 @@ def verify_command(
 ####################################################################
 #
 @main.command("fix-locations")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from, used to resolve "
-        f"--trip.  Defaults to ${ARCHIVE_ENV}."
-    ),
-)
+@archive_options("Staging archive --trip is resolved against.")
 @click.option(
     "--trip",
     "wanted",
@@ -990,6 +996,7 @@ def verify_command(
 @click.option("--username", default=None, help="Tripsy account username.")
 @click.option("--password", default=None, help="Tripsy account password.")
 def fix_locations_command(
+    archive_name: str,
     archive_root: Path | None,
     wanted: tuple[str, ...],
     geocoder: str,
@@ -1025,7 +1032,7 @@ def fix_locations_command(
     California, which is not distinguishable from a good answer except by
     measuring it against what the trip already knows.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if wanted:
         try:
@@ -1187,16 +1194,7 @@ def backfill_group() -> None:
 ####################################################################
 #
 @backfill_group.command("report")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--population",
     "wanted_populations",
@@ -1206,6 +1204,7 @@ def backfill_group() -> None:
 )
 @click.argument("wanted", nargs=-1)
 def backfill_report_command(
+    archive_name: str,
     archive_root: Path | None,
     wanted_populations: tuple[str, ...],
     wanted: tuple[str, ...],
@@ -1224,7 +1223,7 @@ def backfill_report_command(
     that finishes soonest: one airport or station recurs across a whole
     corpus, and answering it once closes every gap that names it.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if wanted:
         try:
@@ -1275,16 +1274,7 @@ def backfill_report_command(
 #
 @backfill_group.command("draft")
 @click.argument("destination", type=click.Path(dir_okay=False, path_type=Path))
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--population",
     "wanted_populations",
@@ -1295,6 +1285,7 @@ def backfill_report_command(
 @click.argument("wanted", nargs=-1)
 def backfill_draft_command(
     destination: Path,
+    archive_name: str,
     archive_root: Path | None,
     wanted_populations: tuple[str, ...],
     wanted: tuple[str, ...],
@@ -1311,7 +1302,7 @@ def backfill_draft_command(
     and is skipped, as is any key ending in '_note', which is there for
     a reader rather than for the archive.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if wanted:
         try:
@@ -1345,23 +1336,17 @@ def backfill_draft_command(
 @click.argument(
     "source", type=click.Path(exists=True, dir_okay=False, path_type=Path)
 )
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--write/--dry-run",
     default=False,
     help="Save the corrections.  Without it, report what would be saved.",
 )
 def backfill_apply_command(
-    source: Path, archive_root: Path | None, write: bool
+    source: Path,
+    archive_name: str,
+    archive_root: Path | None,
+    write: bool,
 ) -> None:
     """
     Read an edited work-list back and write it as corrections.
@@ -1374,7 +1359,7 @@ def backfill_apply_command(
     corrections are merged rather than replaced: applying a second
     work-list does not discard the first.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     try:
         rows = read_worklist(source, archive)
@@ -1402,16 +1387,7 @@ def backfill_apply_command(
 ####################################################################
 #
 @backfill_group.command("infer")
-@click.option(
-    "--archive",
-    "archive_root",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Directory the staged trips are read from.  Defaults to "
-        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
-    ),
-)
+@archive_options("Staging archive the trips are read from.")
 @click.option(
     "--disagree-km",
     default=DISAGREE_KM,
@@ -1429,6 +1405,7 @@ def backfill_apply_command(
 )
 @click.argument("wanted", nargs=-1)
 def backfill_infer_command(
+    archive_name: str,
     archive_root: Path | None,
     disagree_km: float,
     write: bool,
@@ -1450,7 +1427,7 @@ def backfill_infer_command(
     Dry run by default.  Run this before `backfill report`, so what is
     left for a person to answer is only what the archive could not.
     """
-    archive = staged_archive(archive_root)
+    archive = staged_archive(archive_name, archive_root)
 
     if wanted:
         try:

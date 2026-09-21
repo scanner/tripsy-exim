@@ -3,13 +3,13 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim backfill infer  [--archive DIRECTORY] [--disagree-km FLOAT]
+tripsy-exim backfill infer  [--archive NAME] [--disagree-km FLOAT]
                             [--write | --dry-run] [TRIP]...
-tripsy-exim backfill report [--archive DIRECTORY]
+tripsy-exim backfill report [--archive NAME]
                             [--population NAME]... [TRIP]...
-tripsy-exim backfill draft  FILE [--archive DIRECTORY]
+tripsy-exim backfill draft  FILE [--archive NAME]
                             [--population NAME]... [TRIP]...
-tripsy-exim backfill apply  FILE [--archive DIRECTORY]
+tripsy-exim backfill apply  FILE [--archive NAME]
                             [--write | --dry-run]
 ```
 
@@ -243,9 +243,13 @@ wrong answer.
 
 ## OPTIONS
 
-`--archive DIRECTORY`
-: Directory the staged trips are read from. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the trips are read from. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 `--disagree-km FLOAT`
 : `infer` only. Refuse a code whose recorded positions sit further apart

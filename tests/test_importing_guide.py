@@ -149,7 +149,7 @@ def walkthrough(
 
     def step(*argv: str) -> str:
         """One documented command, recorded as a reader would see it."""
-        result = runner.invoke(main, [*argv, "--archive", str(archive)])
+        result = runner.invoke(main, [*argv, "--archive-root", str(archive)])
         assert result.exit_code == 0, f"{argv}\n{result.output}"
         run.steps.append(
             (

@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim verify [--archive DIRECTORY] [--trip TEXT]... [--limit N]
+tripsy-exim verify [--archive NAME] [--trip TEXT]... [--limit N]
                    [--verbose] [--username TEXT] [--password TEXT]
 ```
 
@@ -63,9 +63,13 @@ A trip that did not  [DIFFERS]  46 of 47 planned
 : Credentials for this run. See CREDENTIALS in the
   [README](../README.md).
 
-`--archive DIRECTORY`
-: Where the staged trips are read from. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the trips are read from. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 ## EXAMPLES
 

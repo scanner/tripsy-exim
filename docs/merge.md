@@ -3,8 +3,8 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim merge [--archive DIRECTORY] ABSORBED TARGET
-tripsy-exim merge [--archive DIRECTORY] --undo ABSORBED
+tripsy-exim merge [--archive NAME] ABSORBED TARGET
+tripsy-exim merge [--archive NAME] --undo ABSORBED
 ```
 
 ## RUNNING
@@ -49,9 +49,13 @@ would leave the rival trip standing.
 : Release `ABSORBED` so it uploads as its own trip again. Takes no
   `TARGET`.
 
-`--archive DIRECTORY`
-: Where the staged trips are read from. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the trips are read from. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 ## DIAGNOSTICS
 

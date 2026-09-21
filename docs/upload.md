@@ -3,7 +3,7 @@
 ## SYNOPSIS
 
 ```text
-tripsy-exim upload [--archive DIRECTORY] [--trip TEXT]... [--limit N]
+tripsy-exim upload [--archive NAME] [--trip TEXT]... [--limit N]
                    [--write | --dry-run] [--force] [--verbose]
                    [--username TEXT] [--password TEXT]
 ```
@@ -70,9 +70,13 @@ the only time they cost nothing. What is left unplaced afterwards is
 : Credentials for this run. See CREDENTIALS in the
   [README](../README.md); only needed with `--write`.
 
-`--archive DIRECTORY`
-: Where the staged trips are read from. Defaults to
-  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
+`--archive NAME`
+: Staging archive the trips are read from. Named under `<root>/staged/`.
+  Defaults to `staged`.
+
+`--archive-root DIRECTORY`
+: Where the staging archives and the exports live. Defaults to
+  `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
 ## EXAMPLES
 

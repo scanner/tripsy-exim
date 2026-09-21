@@ -24,6 +24,7 @@ from click.testing import CliRunner
 # Project imports
 from tests import tripit_builder as b
 from tripsy_exim.cli import main
+from tripsy_exim.store import DEFAULT_ARCHIVE, Archive, staged_path
 
 # Two trips whose names share a word and differ in another.  Suffixed
 # because a bare place name elsewhere in the suite is a position.
@@ -104,24 +105,63 @@ def staged(
     runner: CliRunner, tmp_path: Path, write_export: Callable[..., Path]
 ) -> Callable[..., Path]:
     """
-    Stage trips into a fresh archive and give back its root.
+    Stage trips into a fresh archive and give back the archive root.
 
     Every command but the staging ones needs an archive to work on
     rather than an export, so building one is groundwork rather than
     part of any test.
+
+    What comes back is the root, which is what a command is given.  The
+    archive itself is one level down, under `staged/`; `opened` is how a
+    test reads it back.
+
+    `archive` names which one to stage into, so calling this twice under
+    one root gives a test two archives to tell apart.
+
+    The root is deliberately not `tmp_path / "archive"`: that is where
+    the `archive` fixture in the parent conftest puts an Archive, and a
+    test taking both would otherwise get one rooted at the root, reading
+    nothing and saying nothing about why.
     """
 
-    def stage(*trips: dict) -> Path:
+    def stage(*trips: dict, archive: str = DEFAULT_ARCHIVE) -> Path:
         """Stage these trips, or one ordinary one when none are named."""
         if not trips:
             trips = (b.trip(objects=[b.flight()]),)
         export = write_export(*trips)
-        archive_root = tmp_path / "archive"
+        archive_root = tmp_path / "archives"
         result = runner.invoke(
             main,
-            ["stage-export", str(export), "--archive", str(archive_root)],
+            [
+                "stage-export",
+                str(export),
+                "--archive-root",
+                str(archive_root),
+                "--archive",
+                archive,
+            ],
         )
         assert result.exit_code == 0, result.output
         return archive_root
 
     return stage
+
+
+####################################################################
+#
+@pytest.fixture
+def opened() -> Callable[[Path], Archive]:
+    """
+    Open the staging archive a root holds, for reading back.
+
+    A command is given the root and settles the rest itself, so a test
+    checking what one wrote has to name the same archive the command
+    chose.  Doing that by hand in every test would spread one decision
+    across the suite.
+    """
+
+    def open_archive(archive_root: Path) -> Archive:
+        """The default staging archive under this root."""
+        return Archive(staged_path(archive_root, DEFAULT_ARCHIVE))
+
+    return open_archive
