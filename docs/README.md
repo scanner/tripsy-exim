@@ -18,6 +18,7 @@ share, which is why it has no synopsis of its own.
 | [upload(1)](upload.md) | Send staged trips to Tripsy |
 | [verify(1)](verify.md) | Read them back and compare against the plan |
 | [fix-locations(1)](fix-locations.md) | Geocode what Tripsy left without a position |
+| [backfill(1)](backfill.md) | Say what the staged trips still need a person for |
 | [models(7)](models.md) | The pydantic object model, and how it maps to Tripsy's |
 | [fake-api(7)](fake-api.md) | The in-memory Tripsy API the tests run against |
 | [archive(7)](archive.md) | The archive on disk, identifiers, overrides, the manifest |

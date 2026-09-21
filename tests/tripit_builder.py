@@ -108,8 +108,23 @@ def flight(
     day: str = "2024-05-01",
     frm: str = "San Francisco",
     to: str = "Osaka",
+    placed: bool = True,
 ) -> dict[str, Any]:
-    """A flight record, with one segment per leg."""
+    """
+    A flight record, with one segment per leg.
+
+    Args:
+        name: What the record is called.
+        legs: How many segments to give it.
+        day: The date every segment happens on.
+        frm: Where it starts.  Its first three letters are the code.
+        to: Where it ends.
+        placed: Whether the endpoints carry an airport name and a
+            position.  Real exports nearly always do, but the code and
+            the name are separate fields and an export can carry the
+            code alone -- which leaves an endpoint the app has no way
+            to place, and is the case backfill is for.
+    """
     segments = [
         {
             "StartDateTime": moment(
@@ -117,13 +132,19 @@ def flight(
             ),
             "EndDateTime": moment(day, "16:40:00"),
             "start_airport_code": frm[:3].upper(),
-            "start_airport_name": f"{frm} International Airport",
-            "start_airport_latitude": "37.615215",
-            "start_airport_longitude": "-122.389881",
             "end_airport_code": to[:3].upper(),
-            "end_airport_name": f"{to} International Airport",
-            "end_airport_latitude": "34.435330",
-            "end_airport_longitude": "135.243977",
+            **(
+                {
+                    "start_airport_name": f"{frm} International Airport",
+                    "start_airport_latitude": "37.615215",
+                    "start_airport_longitude": "-122.389881",
+                    "end_airport_name": f"{to} International Airport",
+                    "end_airport_latitude": "34.435330",
+                    "end_airport_longitude": "135.243977",
+                }
+                if placed
+                else {}
+            ),
             "marketing_airline": "Example Air",
             "marketing_flight_number": str(100 + index),
             "start_terminal": "I",
