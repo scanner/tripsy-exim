@@ -27,12 +27,14 @@ class Transportation(CanonicalModel):
             "phone",
             "website",
             "departure_description",
+            "departure_location_type",
             "departure_at",
             "departure_timezone",
             "departure_address",
             "departure_longitude",
             "departure_latitude",
             "arrival_description",
+            "arrival_location_type",
             "arrival_at",
             "arrival_timezone",
             "arrival_address",
@@ -58,6 +60,7 @@ class Transportation(CanonicalModel):
             "distance_meters",
             "price",
             "currency",
+            "sort_order",
             "departure_apple_maps_id",
         }
     )
@@ -84,6 +87,13 @@ class Transportation(CanonicalModel):
     # recoverable only in combination with these.
     #
     departure_description: str | None = None
+
+    # What kind of place an endpoint is -- 'publicTransport', 'lodging',
+    # 'general', 'tour'.  The app calls it the endpoint's category and
+    # sets it on the legs it creates; the same free-string caution as the
+    # type fields applies, so it is not constrained here.
+    #
+    departure_location_type: str | None = None
     departure_at: UtcDatetime | None = None
     departure_timezone: str | None = None
     departure_address: str | None = None
@@ -94,6 +104,7 @@ class Transportation(CanonicalModel):
     departure_apple_maps_id: str | None = None
 
     arrival_description: str | None = None
+    arrival_location_type: str | None = None
     arrival_at: UtcDatetime | None = None
     arrival_timezone: str | None = None
     arrival_address: str | None = None
@@ -117,6 +128,14 @@ class Transportation(CanonicalModel):
     distance_meters: int | None = None
     price: Money | None = None
     currency: str | None = None
+
+    # One dense sequence across a whole trip rather than per collection:
+    # activities, hostings and transportations share it, and the app
+    # renders a trip in it.  The API stores what it is given and computes
+    # nothing, so an object created without one holds 0 -- verified
+    # 2026-09-12.  The importer numbers a trip chronologically.
+    #
+    sort_order: int | None = None
 
     # Read-only.  `arrival_apple_maps_id` is returned by v2 but is not in
     # the documented writable set, unlike its departure counterpart.

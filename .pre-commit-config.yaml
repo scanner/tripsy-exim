@@ -25,3 +25,25 @@ repos:
         additional_dependencies:
           - pydantic
           - click
+  - repo: local
+    hooks:
+      # Only synthetic fixtures are committed, and .gitignore re-allows
+      # this directory for them, so what lands here is checked at the
+      # one moment it can still be stopped.
+      - id: fixtures-are-not-a-real-export
+        name: no committed fixture claims to come from TripIt
+        language: pygrep
+        entry: (?i)tripit\.com
+        files: ^tests/fixtures/.*\.(ics|json)$
+      - id: calendars-carry-the-synthetic-prodid
+        name: every committed .ics fixture is the generator's
+        language: pygrep
+        entry: //tripsy-exim//synthetic test calendar//
+        args: [--negate]
+        files: ^tests/fixtures/.*\.ics$
+      - id: exports-carry-the-synthetic-marker
+        name: every committed .json fixture is the generator's
+        language: pygrep
+        entry: x_synthetic.*tripsy-exim generated export
+        args: [--negate]
+        files: ^tests/fixtures/.*\.json$

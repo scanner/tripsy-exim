@@ -22,7 +22,7 @@ here.
 """
 
 # system imports
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -71,6 +71,10 @@ MIN_TRIP_IDENTIFIER_LENGTH = 5
 #
 MOVE_FIELD = "update_trip"
 
+# What the API answers when a token is missing, malformed or spent.
+#
+UNAUTHORIZED = 401
+
 
 ########################################################################
 ########################################################################
@@ -115,6 +119,7 @@ class TripsyClient:
         *,
         token: str | None = None,
         auth: TripsyAuth | None = None,
+        reauthenticate: Callable[[], str] | None = None,
         base_url: str = BASE,
         profile: PacingProfile = IMPORT,
         pacer: Pacer | None = None,
@@ -126,6 +131,10 @@ class TripsyClient:
         Args:
             token: A token from `POST /auth`, if one is already held.
             auth: A prepared auth object, for OAuth2 or a shared token.
+            reauthenticate: Called to obtain a fresh token when a request
+                is refused as unauthenticated.  Without one a refusal is
+                raised, which is right for a token given on the command
+                line: there is nowhere to get another from.
                 Takes precedence over `token`.
             base_url: The API root.
             profile: The pace to keep, when building a pacer.  Ignored if
@@ -140,6 +149,12 @@ class TripsyClient:
                 pass the fake's; production leaves it alone.
         """
         self.auth = auth if auth is not None else TokenAuth(token or "")
+
+        # Called when a request is refused as unauthenticated, to obtain
+        # a replacement token.  A cached token has no stated lifetime, so
+        # the only way to learn it is spent is to be told so.
+        #
+        self.reauthenticate = reauthenticate
         self.retries = retries
         self.pacer = pacer if pacer is not None else Pacer(profile)
 
@@ -234,6 +249,7 @@ class TripsyClient:
             key = json.get("internal_identifier")
 
         attempt = 1
+        replaced = False
         while True:
             # Recomputed each time round, because the attempt budget is
             # half of what makes a request retryable and it shrinks.
@@ -289,6 +305,20 @@ class TripsyClient:
             ):
                 self._hold_off(attempt)
                 attempt += 1
+                continue
+
+            # A token with no stated lifetime is only known to be spent
+            # when it is refused.  One replacement per request: a second
+            # refusal is about the credentials rather than the token, and
+            # retrying it would be a loop.
+            #
+            if (
+                response.status_code == UNAUTHORIZED
+                and self.reauthenticate is not None
+                and not replaced
+            ):
+                self.auth.token = self.reauthenticate()
+                replaced = True
                 continue
 
             raise error_for(response, retry_after=directive)

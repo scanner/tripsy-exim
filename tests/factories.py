@@ -33,10 +33,11 @@ from factory.declarations import SKIP
 from pytest_factoryboy import named_model
 
 # Project imports
-from tripsy_exim.models import Hosting, Trip, mint
+from tripsy_exim.models import Activity, Hosting, Trip, mint
 
 __all__ = [
     "SKIP",
+    "ActivityFactory",
     "ActivityPayloadFactory",
     "CollaboratorPayloadFactory",
     "ExpensePayloadFactory",
@@ -232,3 +233,28 @@ class HostingFactory(factory.Factory):
     timezone = "Europe/Rome"
     price = Decimal("78.5")
     currency = "EUR"
+
+
+########################################################################
+########################################################################
+#
+class ActivityFactory(factory.Factory):
+    """
+    A canonical activity built directly, not parsed from a response.
+
+    Identity only.  An activity is what the parser falls back to when
+    nothing else matched, so a bare one is the ordinary case rather than
+    a stunted version of a fuller object -- and leaving the rest unset is
+    what lets a test say which fields it filled in.  Code that reads an
+    address or a position branches on whether one is there at all, so a
+    factory that invented them would answer a different question than
+    the test asked.
+    """
+
+    class Meta:
+        model = Activity
+
+    internal_identifier = factory.Sequence(
+        lambda n: mint("ics", f"activity-{n}")
+    )
+    name = factory.Faker("sentence", nb_words=3)

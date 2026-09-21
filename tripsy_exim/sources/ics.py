@@ -54,10 +54,11 @@ from icalendar import Calendar, Component
 
 # Project imports
 from tripsy_exim.models import Activity, Hosting, Transportation, Trip, mint
+from tripsy_exim.sources.join import key_from_calendar
 from tripsy_exim.sources.timezones import zone_for
 
 # Names the key an identifier is minted from, not the file it arrived in.
-# The same TripIt uuid could reach us by another route -- the GDPR JSON
+# The same TripIt uuid could reach us by another route -- the TripIt JSON
 # export most obviously -- and an import that keys on it must mint the
 # same identifier in order to correct these objects rather than duplicate
 # them.  Changing this after the first import orphans everything already
@@ -89,9 +90,21 @@ _CONSUMED = frozenset(
     {"UID", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "DTSTART", "DTEND"}
 )
 
+# Properties that describe the export rather than the trip.  They are the
+# one thing worth dropping outright: DTSTAMP is minted fresh on every
+# export, so retaining it would record when a file was generated and
+# nothing about the travel it describes.
+#
+_EXPORT_METADATA = frozenset({"DTSTAMP"})
+
 HOSTING = "hosting"
 ACTIVITY = "activity"
 TRANSPORTATION = "transportation"
+
+# Not a collection: what a record is filed under when it should not be
+# imported at all.
+#
+SKIPPED = "skipped"
 
 
 ########################################################################
@@ -136,12 +149,38 @@ class ParsedCalendar:
     transportations: list[Transportation] = field(default_factory=list)
     notes: list[EventNote] = field(default_factory=list)
 
+    # How this trip is recognised in the other source.  Set by whichever
+    # parser produced it, so a consumer matches trips without knowing
+    # which source it is holding.  None when the trip cannot be keyed.
+    #
+    join_key: str | None = None
+
+    # The uuid the trip's identifier was minted from.  Corrections are
+    # keyed by it rather than by the identifier, so one made during a
+    # shaping run still reaches the same trip in the real one -- and
+    # minting is one-way, so it has to be carried rather than recovered.
+    #
+    trip_uuid: str | None = None
+
     ####################################################################
     #
     @property
     def unclassified(self) -> list[EventNote]:
         """Events that matched no rule and defaulted to an activity."""
         return [n for n in self.notes if not n.confident]
+
+    ####################################################################
+    #
+    @property
+    def skipped(self) -> list[EventNote]:
+        """
+        Records the parser deliberately produced nothing for.
+
+        Dropped rather than imported, and listed so the decision is
+        visible: a record nobody can see was discarded is
+        indistinguishable from one the parser failed to read.
+        """
+        return [n for n in self.notes if n.kind == SKIPPED]
 
     ####################################################################
     #
@@ -297,13 +336,28 @@ def _passthrough(event: Component) -> dict[str, Any]:
     to put, and losing it on import is the exact failure this project
     exists in response to.
     """
+    skip = _CONSUMED | _EXPORT_METADATA | {"BEGIN", "END"}
     return {
-        str(name): str(value)
+        str(name): _as_text(value)
         for name, value in event.property_items(recursive=False)
-        if str(name).upper() not in _CONSUMED
-        and str(name).upper() != "BEGIN"
-        and str(name).upper() != "END"
+        if str(name).upper() not in skip
     }
+
+
+####################################################################
+#
+def _as_text(value: Any) -> str:
+    """
+    Render one icalendar property value as text.
+
+    Date and time properties are objects whose `str()` is a Python repr,
+    so they are taken through `.dt` and rendered as ISO 8601.  Everything
+    else stringifies to the text it already holds.
+    """
+    moment = getattr(value, "dt", None)
+    if moment is not None and hasattr(moment, "isoformat"):
+        return str(moment.isoformat())
+    return str(value)
 
 
 ####################################################################
@@ -369,10 +423,20 @@ def _build(
         if all_day:
             source["x_all_day"] = "TRUE"
 
-        # A VEVENT carries one LOCATION and one GEO, so only one end of a
-        # leg can be filled.  Departure is the defensible half: it is where
-        # the traveller is when the event begins, and it is what an
-        # itinerary sorts by.
+        # A VEVENT carries one LOCATION and one GEO, and TripIt puts the
+        # *destination* there.  Measured against the JSON export: of 163
+        # comparable flight events, every one sits nearer the arrival
+        # airport than the departure, and none within 490km of the
+        # departure.  The derived zone follows the same coordinates, so
+        # it is the arrival's too.
+        #
+        # The point is the destination *city*, not its airport -- the
+        # offset runs to a median of 18km and reaches 63km for Tokyo
+        # Narita -- so it places a leg rather than pinpointing it.
+        #
+        # That leaves the departure end empty, which is honest: the
+        # calendar does not say where a leg begins.  The instants are
+        # unaffected, being written in UTC.
         #
         built = Transportation(
             internal_identifier=identifier,
@@ -381,10 +445,10 @@ def _build(
             transportation_type="airplane",
             departure_at=starts,
             arrival_at=ends,
-            departure_timezone=zone,
-            departure_address=common["address"],
-            departure_latitude=common.get("latitude"),
-            departure_longitude=common.get("longitude"),
+            arrival_timezone=zone,
+            arrival_address=common["address"],
+            arrival_latitude=common.get("latitude"),
+            arrival_longitude=common.get("longitude"),
         )
     else:
         built = Activity(
@@ -399,12 +463,16 @@ def _build(
 
 ####################################################################
 #
-def parse(text: str) -> ParsedCalendar:
+def parse(text: str, namespace: str = TRIPIT_UID_NAMESPACE) -> ParsedCalendar:
     """
     Parse one TripIt-exported calendar into canonical objects.
 
     Args:
         text: The contents of a `.ics` file.
+        namespace: The identifier namespace to mint into.  A shaping run
+            passes its own so the objects it creates occupy a separate key
+            space -- identifiers are never released once used, so a run
+            that will be thrown away must not spend the real ones.
 
     Returns:
         The trip, its child objects, and a note per event.  Read
@@ -426,7 +494,14 @@ def parse(text: str) -> ParsedCalendar:
         else:
             items.append(event)
 
-    parsed = ParsedCalendar(trip=_build_trip(calendar, trip_event, items))
+    trip, trip_uuid = _build_trip(calendar, trip_event, items, namespace)
+    parsed = ParsedCalendar(
+        trip=trip,
+        join_key=key_from_calendar(
+            _text(calendar, "X-WR-CALDESC"), trip.starts_at, trip.ends_at
+        ),
+        trip_uuid=trip_uuid,
+    )
 
     zones = _zones_for(items)
 
@@ -469,7 +544,7 @@ def parse(text: str) -> ParsedCalendar:
         kind, confident, reason = classify(
             _text(event, "SUMMARY"), _text(event, "DESCRIPTION")
         )
-        identifier = mint(TRIPIT_UID_NAMESPACE, token)
+        identifier = mint(namespace, token)
         built = _build(
             kind,
             event,
@@ -564,7 +639,8 @@ def _build_trip(
     calendar: Component,
     trip_event: Component | None,
     items: list[Component],
-) -> Trip:
+    namespace: str = TRIPIT_UID_NAMESPACE,
+) -> tuple[Trip, str | None]:
     """
     Build the trip envelope from calendar metadata and the event span.
 
@@ -576,19 +652,21 @@ def _build_trip(
         calendar: The VCALENDAR, for its X-WR- properties.
         trip_event: The one non-item event, when the file has one.
         items: The itinerary events, used for the span as a fallback.
+        namespace: The identifier namespace to mint into.
 
     Returns:
-        A trip, identified by the trip-level event's uuid when there is
-        one.
+        A trip, and the uuid its identifier was minted from -- None when
+        the calendar carries no trip-level event to take one from.
     """
     name = _text(calendar, "X-WR-CALNAME") or None
     description = _text(calendar, "X-WR-CALDESC") or None
 
     identifier = None
+    token = None
     if trip_event is not None:
         token = uuid_from_uid(_text(trip_event, "UID"))
         if token is not None:
-            identifier = mint(TRIPIT_UID_NAMESPACE, token)
+            identifier = mint(namespace, token)
 
     # The trip-level event usually encloses its items, but nothing in the
     # format guarantees it.  Spanning the union means an item outside a
@@ -599,13 +677,16 @@ def _build_trip(
         ([trip_event] if trip_event is not None else []) + items
     )
 
-    return Trip(
-        internal_identifier=identifier,
-        name=name,
-        description=description,
-        starts_at=starts,
-        ends_at=ends,
-        has_dates=starts is not None,
+    return (
+        Trip(
+            internal_identifier=identifier,
+            name=name,
+            description=description,
+            starts_at=starts,
+            ends_at=ends,
+            has_dates=starts is not None,
+        ),
+        token,
     )
 
 

@@ -263,6 +263,11 @@ class FakeTripsy:
             **payload,
         }
         if collection in ("hostings", "activities", "transportations"):
+            # The server computes no ordering: an object created without
+            # a sort_order holds 0, and a whole trip imported without one
+            # stacks on the same position.  Verified 2026-09-12.
+            #
+            child.setdefault("sort_order", 0)
             child.setdefault(
                 "owner",
                 {
@@ -336,6 +341,16 @@ class FakeTripsy:
         """
         if trip_id not in self._trips:
             return 404, {"detail": "Not found."}
+
+        # A transportation must say what kind it is.  Verified against
+        # the live API on 2026-09-13: a create without one is refused,
+        # which a whole run of otherwise good legs would otherwise
+        # discover one object at a time.
+        #
+        if collection == "transportations" and not payload.get(
+            "transportation_type"
+        ):
+            return 400, {"transportation_type": ["This field is required."]}
 
         identifier = payload.get("internal_identifier")
         if identifier:

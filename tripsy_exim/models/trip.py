@@ -7,7 +7,7 @@ The canonical trip.
 child object -- the API uses both and they are not interchangeable.
 
 Trips carry no `created_at` or `updated_at` in either API version, which is
-why the exporter's watermark is the run's wall-clock time rather than
+why an exporter's watermark would be the run's wall-clock time rather than
 anything read out of the data.
 """
 

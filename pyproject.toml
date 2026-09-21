@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "click",
+    "geopy>=2.5.0",
     "httpx",
     "icalendar",
     "pydantic",
@@ -125,6 +126,7 @@ warn_return_any = true
 testpaths = ["tests"]
 markers = [
     "live: talks to the real Tripsy API (deselect with '-m \"not live\"')",
+    "uses_dotenv: the test is about .env itself and may read one",
 ]
 
 [tool.coverage.run]

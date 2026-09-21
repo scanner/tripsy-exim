@@ -12,6 +12,7 @@ objects.
 """
 
 # system imports
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 # 3rd party imports
@@ -38,14 +39,6 @@ from tripsy_exim.sources.timezones import zone_for
 
 TOKYO = ("Asia/Tokyo", 35.6812, 139.7671)
 NEW_YORK = ("America/New_York", 40.7128, -74.0060)
-
-
-####################################################################
-#
-def calendar_text(faker: Faker, **kwargs: object) -> str:
-    """Synthetic .ics text with the defects a test asks for."""
-    built = ics_builder.build_calendar(faker, **kwargs)  # type: ignore[arg-type]
-    return ics_builder.to_ics(built)
 
 
 ########################################################################
@@ -98,7 +91,7 @@ class TestIdentifiers:
     ####################################################################
     #
     def test_an_identifier_is_derived_from_the_uuid_and_stays_put(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: the same calendar parsed twice
@@ -108,7 +101,7 @@ class TestIdentifiers:
                a re-run is a no-op and any other source keyed on that
                uuid corrects this object instead of duplicating it
         """
-        text = calendar_text(faker, items=4)
+        text = ics_calendar(items=4)
 
         first = parse(text)
         second = parse(text)
@@ -235,7 +228,7 @@ class TestClassification:
     ####################################################################
     #
     def test_events_reach_the_right_collections_and_guesses_are_listed(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar with lodging and flight events among others
@@ -247,7 +240,7 @@ class TestClassification:
                before the import runs
         """
         parsed = parse(
-            calendar_text(faker, items=6, lodging=2, flights=1, landmark=TOKYO)
+            ics_calendar(items=6, lodging=2, flights=1, landmark=TOKYO)
         )
 
         check.equal(len(parsed.hostings), 2, "lodging")
@@ -261,25 +254,36 @@ class TestClassification:
 
     ####################################################################
     #
-    def test_a_flight_is_typed_and_fills_only_its_departure(
-        self, faker: Faker
+    def test_a_flight_places_its_geo_at_the_arrival(
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a flight event with one LOCATION and one GEO
         WHEN:  it becomes a transportation
-        THEN:  the departure half is filled and the arrival half is left
-               empty, because a VEVENT carries only one place and
-               inventing the other end would be a fabrication
+        THEN:  the arrival half is filled and the departure half is left
+               empty
+
+        TripIt puts the destination in those properties.  Measured
+        against the JSON export, every one of 163 comparable flight
+        events sits nearer the arrival airport than the departure, none
+        within 490km of the departure, and the zone derived from the same
+        coordinates matched the arrival's in every case.  Filling the
+        departure instead put every leg in the wrong place.
+
+        The point is the destination city rather than its airport, so it
+        places a leg within a few tens of kilometres and no closer.  The
+        instants are unaffected either way: TripIt writes them in UTC.
         """
-        parsed = parse(calendar_text(faker, items=1, flights=1, landmark=TOKYO))
+        parsed = parse(ics_calendar(items=1, flights=1, landmark=TOKYO))
         leg = parsed.transportations[0]
 
         check.equal(leg.transportation_type, "airplane", "typed")
         check.is_not_none(leg.departure_at, "departure instant")
-        check.equal(leg.departure_timezone, "Asia/Tokyo", "departure zone")
-        check.is_not_none(leg.departure_address, "departure address")
-        check.is_none(leg.arrival_address, "arrival left empty")
-        check.is_none(leg.arrival_timezone, "and unzoned")
+        check.is_not_none(leg.arrival_at, "arrival instant")
+        check.equal(leg.arrival_timezone, "Asia/Tokyo", "arrival zone")
+        check.is_not_none(leg.arrival_address, "arrival address")
+        check.is_none(leg.departure_address, "departure left empty")
+        check.is_none(leg.departure_timezone, "and unzoned")
 
 
 ########################################################################
@@ -324,7 +328,7 @@ class TestTimezones:
     )
     def test_a_zone_is_derived_inherited_or_honestly_absent(
         self,
-        faker: Faker,
+        ics_calendar: Callable[..., str],
         kwargs: dict[str, object],
         expected: list[tuple[str | None, str]],
     ) -> None:
@@ -335,7 +339,7 @@ class TestTimezones:
                nearest neighbour where it does not, and left absent when
                the file holds none -- each marked with which it was
         """
-        parsed = parse(calendar_text(faker, **kwargs))
+        parsed = parse(ics_calendar(**kwargs))
 
         check.equal(
             [(n.timezone, n.timezone_source) for n in parsed.notes],
@@ -403,7 +407,7 @@ class TestTimeForms:
     )
     def test_every_date_form_lands_on_the_right_utc_instant(
         self,
-        faker: Faker,
+        ics_calendar: Callable[..., str],
         kwargs: dict[str, object],
         expected: datetime,
         all_day: bool,
@@ -415,7 +419,7 @@ class TestTimeForms:
                the zone derived for it, and is flagged all-day only when
                the source was date-only
         """
-        parsed = parse(calendar_text(faker, items=1, **kwargs))
+        parsed = parse(ics_calendar(items=1, **kwargs))
         activity = parsed.activities[0]
 
         check.equal(activity.starts_at, expected, "instant")
@@ -431,7 +435,7 @@ class TestTripEnvelope:
     ####################################################################
     #
     def test_the_trip_takes_its_name_and_span_from_the_calendar(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar with X-WR- metadata and a trip-level event
@@ -439,10 +443,19 @@ class TestTripEnvelope:
         THEN:  the trip is named from the calendar and dated from the
                trip-level event, as plain dates needing no zone
         """
-        parsed = parse(calendar_text(faker, items=4, start=date(2027, 6, 1)))
+        parsed = parse(
+            ics_calendar(
+                items=4, start=date(2027, 6, 1), name="Kyoto, May 2027"
+            )
+        )
 
+        # TripIt wraps the trip name in the calendar owner's, so the
+        # property is not the trip's name on its own.  The parser stores
+        # it verbatim; pulling the trip's own name out is the join key's
+        # job, off X-WR-CALDESC.
+        #
         check.is_true(
-            parsed.trip.name and parsed.trip.name.startswith("Trip to"),
+            parsed.trip.name and "Kyoto, May 2027" in parsed.trip.name,
             "named from X-WR-CALNAME",
         )
         check.is_not_none(parsed.trip.description, "and described")
@@ -455,7 +468,7 @@ class TestTripEnvelope:
     ####################################################################
     #
     def test_the_trip_level_event_is_not_imported_as_a_child(
-        self, faker: Faker
+        self, ics_calendar: Callable[..., str]
     ) -> None:
         """
         GIVEN: a calendar whose first event is the trip itself
@@ -463,7 +476,7 @@ class TestTripEnvelope:
         THEN:  only the item events become child objects, or every trip
                would carry a duplicate of itself as an activity
         """
-        parsed = parse(calendar_text(faker, items=3))
+        parsed = parse(ics_calendar(items=3))
 
         total = (
             len(parsed.hostings)
@@ -509,15 +522,55 @@ class TestPassthrough:
 
     ####################################################################
     #
-    def test_non_ascii_text_survives_a_round_trip(self, faker: Faker) -> None:
+    def test_export_metadata_is_dropped(self, faker: Faker) -> None:
+        """
+        GIVEN: an event carrying DTSTAMP, as every real export does
+        WHEN:  it is parsed
+        THEN:  it is not retained -- it names the export, not the trip,
+               and is minted fresh every time a file is generated
+        """
+        calendar = ics_builder.build_calendar(faker, items=1)
+
+        retained = (
+            parse(ics_builder.to_ics(calendar)).activities[0].source_extras
+        )
+
+        check.is_not_in("DTSTAMP", retained)
+
+    ####################################################################
+    #
+    def test_dates_are_kept_as_iso_text(self, faker: Faker) -> None:
+        """
+        GIVEN: an unmapped property whose value is a date
+        WHEN:  it is parsed
+        THEN:  it is stored as ISO 8601, not as a Python repr
+
+        icalendar's date values stringify to their repr, so a plain str()
+        would put 'vDDDTypes(...)' in the archive instead of a value.
+        """
+        calendar = ics_builder.build_calendar(faker, items=1)
+        event = [c for c in calendar.walk() if c.name == "VEVENT"][-1]
+        event.add("x-tripit-booked-on", datetime(2027, 3, 4, tzinfo=UTC))
+
+        retained = (
+            parse(ics_builder.to_ics(calendar)).activities[0].source_extras
+        )
+
+        kept = retained.get("X-TRIPIT-BOOKED-ON", "")
+        check.is_in("2027-03-04", kept)
+        check.is_not_in("vDDD", kept)
+
+    ####################################################################
+    #
+    def test_non_ascii_text_survives_a_round_trip(
+        self, ics_calendar: Callable[..., str]
+    ) -> None:
         """
         GIVEN: an event whose text is non-ASCII, as real ones are
         WHEN:  it is parsed
         THEN:  the characters arrive intact rather than mangled
         """
-        parsed = parse(
-            calendar_text(faker, items=1, non_ascii=1, landmark=TOKYO)
-        )
+        parsed = parse(ics_calendar(items=1, non_ascii=1, landmark=TOKYO))
         activity = parsed.activities[0]
 
         assert any(
@@ -589,7 +642,10 @@ class TestFieldsWithNoHomeOnTheModel:
         ],
     )
     def test_all_day_survives_on_a_model_that_cannot_express_it(
-        self, faker: Faker, kwargs: dict[str, int], collection: str
+        self,
+        ics_calendar: Callable[..., str],
+        kwargs: dict[str, int],
+        collection: str,
     ) -> None:
         """
         GIVEN: a date-only event that classifies as lodging or a flight
@@ -599,7 +655,7 @@ class TestFieldsWithNoHomeOnTheModel:
                silent
         """
         parsed = parse(
-            calendar_text(faker, items=1, date_only=1, landmark=TOKYO, **kwargs)
+            ics_calendar(items=1, date_only=1, landmark=TOKYO, **kwargs)
         )
         built = getattr(parsed, collection)[0]
 
@@ -629,7 +685,7 @@ class TestFieldsWithNoHomeOnTheModel:
     ####################################################################
     #
     def test_an_unloadable_zone_is_reported_rather_than_hidden(
-        self, faker: Faker, mocker: MockerFixture
+        self, ics_calendar: Callable[..., str], mocker: MockerFixture
     ) -> None:
         """
         GIVEN: coordinates that derive a zone the machine cannot load,
@@ -642,9 +698,7 @@ class TestFieldsWithNoHomeOnTheModel:
         """
         mocker.patch("tripsy_exim.sources.ics._zoneinfo", return_value=None)
 
-        parsed = parse(
-            calendar_text(faker, items=1, floating=1, landmark=TOKYO)
-        )
+        parsed = parse(ics_calendar(items=1, floating=1, landmark=TOKYO))
         note = parsed.notes[0]
 
         check.equal(note.timezone, "Asia/Tokyo", "the name was derived")

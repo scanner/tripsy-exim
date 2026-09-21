@@ -93,8 +93,9 @@ class TestGeneratedShape:
         """
         GIVEN: a generated calendar
         WHEN:  its properties are inspected
-        THEN:  it carries what the real files carry, so a parser written
-               against it is not surprised later
+        THEN:  it carries what the real files carry and says it is
+               generated, so a parser written against it is not
+               surprised later and nobody mistakes it for an export
         """
         text = ics_calendar(items=3)
         calendar = Calendar.from_ical(text)
@@ -106,9 +107,14 @@ class TestGeneratedShape:
             SYNTHETIC_PRODID,
             "PRODID marks it synthetic, never TripIt's own",
         )
+        check.is_not_in("tripit.com", text.lower(), "no TripIt marker")
         for event in events_of(text):
             for prop in ("DTSTAMP", "UID", "DTSTART", "DTEND", "SUMMARY"):
                 check.is_in(prop, event, f"event has {prop}")
+            check.is_true(
+                uid_of(event).endswith(f"@{SYNTHETIC_UID_DOMAIN}"),
+                "the UID domain is reserved, never a real one",
+            )
 
 
 ########################################################################
