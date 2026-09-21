@@ -35,14 +35,14 @@ class TestTripName:
         "caldesc,expected",
         [
             (
-                "Osaka, Japan, November 2026 (Trip Shared by Scanner Luce)",
-                "Osaka, Japan, November 2026",
+                "Kyoto, May 2011 (Trip Shared by Another Traveller)",
+                "Kyoto, May 2011",
             ),
             (
                 "日本の旅行 (Trip Shared by Someone Else)",
                 "日本の旅行",
             ),
-            ("Burlington, VT, March 2014", "Burlington, VT, March 2014"),
+            ("Osaka, June 2012", "Osaka, June 2012"),
             ("", ""),
         ],
         ids=["shared", "non-ascii", "no-suffix", "empty"],
