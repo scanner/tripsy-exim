@@ -109,6 +109,8 @@ def flight(
     frm: str = "San Francisco",
     to: str = "Osaka",
     placed: bool = True,
+    frm_at: tuple[float, float] = (37.615215, -122.389881),
+    to_at: tuple[float, float] = (34.435330, 135.243977),
 ) -> dict[str, Any]:
     """
     A flight record, with one segment per leg.
@@ -119,6 +121,10 @@ def flight(
         day: The date every segment happens on.
         frm: Where it starts.  Its first three letters are the code.
         to: Where it ends.
+        frm_at: Where the departure airport is.  Worth naming when a
+            test turns on which position it got, since otherwise every
+            flight the builder makes departs from the same point.
+        to_at: Where the arrival airport is.
         placed: Whether the endpoints carry an airport name and a
             position.  Real exports nearly always do, but the code and
             the name are separate fields and an export can carry the
@@ -136,11 +142,11 @@ def flight(
             **(
                 {
                     "start_airport_name": f"{frm} International Airport",
-                    "start_airport_latitude": "37.615215",
-                    "start_airport_longitude": "-122.389881",
+                    "start_airport_latitude": str(frm_at[0]),
+                    "start_airport_longitude": str(frm_at[1]),
                     "end_airport_name": f"{to} International Airport",
-                    "end_airport_latitude": "34.435330",
-                    "end_airport_longitude": "135.243977",
+                    "end_airport_latitude": str(to_at[0]),
+                    "end_airport_longitude": str(to_at[1]),
                 }
                 if placed
                 else {}

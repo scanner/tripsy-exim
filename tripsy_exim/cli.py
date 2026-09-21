@@ -74,6 +74,11 @@ from tripsy_exim.sync.importer import (
     uploaded_trips,
     verify_trip,
 )
+from tripsy_exim.sync.infer import (
+    DISAGREE_KM,
+    filled_rows,
+    inferences,
+)
 from tripsy_exim.sync.worklist import (
     WorkListError,
     apply_rows,
@@ -1365,6 +1370,104 @@ def backfill_apply_command(
         f"{outcome.unchanged} already correct, "
         f"{outcome.left_blank} left blank, {len(outcome.refused)} refused"
     )
+    if outcome.written and not write:
+        click.echo("\nNothing was saved.  Pass --write to save it.")
+
+
+####################################################################
+#
+@backfill_group.command("infer")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--disagree-km",
+    default=DISAGREE_KM,
+    show_default=True,
+    type=float,
+    help=(
+        "Refuse a code whose recorded positions sit further apart than "
+        "this, on the grounds that it names two places rather than one."
+    ),
+)
+@click.option(
+    "--write/--dry-run",
+    default=False,
+    help="Save the corrections.  Without it, report what would be saved.",
+)
+@click.argument("wanted", nargs=-1)
+def backfill_infer_command(
+    archive_root: Path | None,
+    disagree_km: float,
+    write: bool,
+    wanted: tuple[str, ...],
+) -> None:
+    """
+    Place what the archive can work out from itself.
+
+    An export places nearly everything it carries, so an endpoint naming
+    an airport code without a position usually names one that some other
+    segment placed.  This finds those and fills them in, with no human
+    input and nothing asked of any outside service.
+
+    Only exact keys are matched.  An airport code is three letters and
+    nothing else; a station gives its name instead, and free text is not
+    a key -- two spellings of one station are two keys, and one spelling
+    can be two stations.
+
+    Dry run by default.  Run this before `backfill report`, so what is
+    left for a person to answer is only what the archive could not.
+    """
+    archive = staged_archive(archive_root)
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = archive.trip_keys()
+    if not keys:
+        raise click.ClickException(f"no staged trips in {archive.root}")
+
+    # Positions are gathered across the whole archive even when one trip
+    # is named: the airport this trip left unplaced was very likely
+    # placed on another.
+    #
+    found = inferences(archive, in_travel_order(archive, keys), disagree_km)
+    if not found:
+        click.echo("nothing carries a code this could work from")
+        return
+
+    answered = [i for i in found if i.answered]
+    for inference in answered:
+        assert inference.position is not None
+        latitude, longitude = inference.position
+        click.echo(
+            f"  {inference.key}  {latitude:9.4f},{longitude:10.4f}  "
+            f"{inference.agreed} agreed   {inference.gap.trip_key[:16]}"
+        )
+
+    for inference in found:
+        if inference.refusal:
+            click.echo(f"  refused  {inference.gap.where}: {inference.refusal}")
+
+    outcome = apply_rows(archive, filled_rows(archive, found), write=write)
+
+    verb = "placed" if write else "would be placed"
+    click.echo(
+        f"\n{outcome.written} {verb}, {len(found) - len(answered)} refused"
+    )
+    if outcome.refused:
+        for label, why in outcome.refused:
+            click.echo(f"  refused  {label}: {why}")
     if outcome.written and not write:
         click.echo("\nNothing was saved.  Pass --write to save it.")
 

@@ -58,6 +58,15 @@ from tripsy_exim.sync.importer import (
     uploaded_trips,
     verify_trip,
 )
+from tripsy_exim.sync.infer import (
+    DISAGREE_KM,
+    Inference,
+    exact_key,
+    filled_rows,
+    inferences,
+    positions_by_key,
+    settle,
+)
 from tripsy_exim.sync.overrides import (
     OVERRIDES_DIRNAME,
     Addition,
@@ -92,6 +101,13 @@ from tripsy_exim.sync.worklist import (
 )
 
 __all__ = [
+    "DISAGREE_KM",
+    "Inference",
+    "exact_key",
+    "filled_rows",
+    "inferences",
+    "positions_by_key",
+    "settle",
     "Outcome",
     "WorkListError",
     "apply_rows",

@@ -17,3 +17,6 @@ described in [README.md](README.md).
   with the places listed commonest first.
 - `backfill export` writes an editable work-list of what is open, and
   `backfill apply` reads it back as corrections.
+- `backfill infer` places an endpoint from an airport code the archive
+  already positions elsewhere, refusing a code that names two places
+  -- two airports serving one city, say.

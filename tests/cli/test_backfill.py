@@ -368,3 +368,171 @@ class TestBackfillRoundTrip:
 
         check.equal(result.exit_code, 1)
         check.is_in("was exported from", result.output)
+
+
+########################################################################
+########################################################################
+#
+class TestBackfillInfer:
+    """Tests for placing what the archive can work out from itself."""
+
+    ####################################################################
+    #
+    @pytest.fixture
+    def half_placed(self, staged: Callable[..., Path]) -> Path:
+        """
+        An archive where one trip placed an airport and another did not.
+
+        The code is what joins them: the answer for the unplaced trip is
+        already on disk, on the placed one.
+        """
+        return staged(
+            b.trip(
+                name="Placed trip",
+                objects=[b.flight(frm="Narita", to="Osaka")],
+            ),
+            b.trip(
+                name=NARITA_TRIP,
+                start="2024-08-01",
+                end="2024-08-04",
+                objects=[b.flight(frm="Narita", to="Vancouver", placed=False)],
+            ),
+        )
+
+    ####################################################################
+    #
+    def test_it_places_a_code_another_trip_placed(
+        self,
+        half_placed: Path,
+        runner: CliRunner,
+        report: Callable[..., str],
+    ) -> None:
+        """
+        GIVEN: an archive where one trip placed NAR and another did not
+        WHEN:  infer runs with --write
+        THEN:  NAR is placed and no longer reported as open
+        """
+        result = runner.invoke(
+            main,
+            [
+                "backfill",
+                "infer",
+                "--archive",
+                str(half_placed),
+                "--write",
+            ],
+        )
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_in("NAR", result.output)
+        check.is_in("1 placed", result.output)
+        check.is_not_in("NAR", report(half_placed))
+
+    ####################################################################
+    #
+    def test_it_is_a_dry_run_by_default(
+        self,
+        half_placed: Path,
+        runner: CliRunner,
+        report: Callable[..., str],
+    ) -> None:
+        """
+        GIVEN: an archive with a code that could be worked out
+        WHEN:  infer runs without --write
+        THEN:  it says what it would do and nothing changes
+        """
+        result = runner.invoke(
+            main, ["backfill", "infer", "--archive", str(half_placed)]
+        )
+
+        check.is_in("would be placed", result.output)
+        check.is_in("Nothing was saved", result.output)
+        check.is_in("NAR", report(half_placed), "still open")
+
+    ####################################################################
+    #
+    def test_a_code_nothing_places_is_reported_as_refused(
+        self, half_placed: Path, runner: CliRunner
+    ) -> None:
+        """
+        GIVEN: an unplaced code no other segment places
+        WHEN:  infer runs
+        THEN:  it is refused by name, and says why
+
+        Self-healing only reaches what the archive already knows; the
+        rest is what a person is for, and has to be visible.
+        """
+        result = runner.invoke(
+            main, ["backfill", "infer", "--archive", str(half_placed)]
+        )
+
+        check.is_in("VAN", result.output)
+        check.is_in("nothing else in the archive places this", result.output)
+        check.is_in("1 refused", result.output)
+
+    ####################################################################
+    #
+    def test_a_code_placed_in_two_places_is_refused(
+        self, staged: Callable[..., Path], runner: CliRunner
+    ) -> None:
+        """
+        GIVEN: an archive placing one code at Narita and at Haneda
+        WHEN:  infer runs, then runs again with a looser threshold
+        THEN:  it refuses first and places second
+
+        The realistic shape of the hazard is a code reused across a
+        metro area rather than across the world, and the threshold is
+        chosen rather than measured -- so the flag that moves it has to
+        actually move it.
+        """
+        narita = (35.7720, 140.3929)
+        haneda = (35.5494, 139.7798)
+        archive_root = staged(
+            b.trip(
+                name="Through Narita",
+                objects=[b.flight(frm="Narita", to="Osaka", frm_at=narita)],
+            ),
+            b.trip(
+                name="Through the other one",
+                start="2024-06-01",
+                end="2024-06-04",
+                objects=[b.flight(frm="Narita", to="Osaka", frm_at=haneda)],
+            ),
+            b.trip(
+                name=NARITA_TRIP,
+                start="2024-08-01",
+                end="2024-08-04",
+                objects=[b.flight(frm="Narita", to="Osaka", placed=False)],
+            ),
+        )
+        infer = ["backfill", "infer", "--archive", str(archive_root)]
+
+        refused = runner.invoke(main, infer)
+        allowed = runner.invoke(main, [*infer, "--disagree-km", "100"])
+
+        # OSA is placed either way; NAR is the one that moves.
+        #
+        check.is_in("disagree about where this is", refused.output)
+        check.is_in("1 would be placed, 1 refused", refused.output)
+        check.is_in("2 would be placed, 0 refused", allowed.output)
+
+    ####################################################################
+    #
+    def test_an_archive_with_no_codes_says_so(
+        self, staged: Callable[..., Path], runner: CliRunner
+    ) -> None:
+        """
+        GIVEN: an archive whose places are all named in free text
+        WHEN:  infer runs
+        THEN:  it says there is nothing it can work from
+
+        Distinct from finding nothing to do: a station name was never a
+        candidate, so reporting it as refused would imply otherwise.
+        """
+        archive_root = staged(b.trip(name="Rail trip", objects=[b.rail()]))
+
+        result = runner.invoke(
+            main, ["backfill", "infer", "--archive", str(archive_root)]
+        )
+
+        check.is_in("nothing carries a code", result.output)
