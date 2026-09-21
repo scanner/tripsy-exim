@@ -43,13 +43,12 @@ and the override machinery were shaped against. The `.ics` path works and
 is tested, but it has seen far less real data, and a calendar can express
 less about a trip than the export can.
 
-Pulling a whole Tripsy account back down is **not written yet**: there is
-no `sync/exporter.py` and no command that calls one. Today the archive is
-filled by staging a source, not by reading Tripsy.
+Pulling a whole Tripsy account back down is **half written**:
+`sync/exporter.py` writes an export, and no command calls it yet. Today
+the archive is filled by staging a source, not by reading Tripsy.
 
-The shape of it is settled, though. An export writes a complete dated
-snapshot into an archive of its own rather than updating one in place.
-See [Exporting from Tripsy](#exporting-from-tripsy).
+An export writes a dated directory of its own rather than updating an
+archive in place. See [Exporting from Tripsy](#exporting-from-tripsy).
 
 See [CHANGELOG.md](CHANGELOG.md) for what has actually shipped.
 
@@ -358,23 +357,26 @@ re-staging never clobbers one.
 
 ### Exporting from Tripsy
 
-Not written yet, and when it is it will not be the import run backwards.
+Not the import run backwards. An export is a backup: what Tripsy held at
+one instant, written whole.
 
-Each run writes a **complete snapshot** under its own UTC timestamp, into
-an archive of its own. Deliberately not incremental: a snapshot is a
-point in time that reads on its own, deletion is simply absence from a
-complete run, and there is no watermark to keep correct. `--trip` narrows
-a run to a subset, and every snapshot records its own scope -- a partial
-run says nothing about the trips it did not ask for, and without that
-recorded, absence would read as deletion.
+Each run writes a dated directory under `<root>/exports/`, one
+subdirectory per trip, each holding a single `trip.json` and whatever
+files were attached to it in the app. Deliberately not incremental and
+never compared against an earlier run -- backups are made, not diffed --
+so there is no watermark to keep correct and nothing to reconcile.
+
+A run records its own scope, because a partial export has to say it is
+one: a directory that cannot tell you whether it means "everything" or
+"these trips" is read wrongly by whoever restores from it.
 
 Nothing in a trip says when it last changed -- Tripsy returns no
-`updated_at` on one -- so the timestamp a snapshot is written under is
-what dates the data inside it. Two snapshots compared then say what
-changed between those two instants, which is change detection that costs
-no requests and keeps no watermark correct.
+`updated_at` on one -- so the timestamp a run is written under is what
+dates the data inside it.
 
-Snapshots accumulate and are managed by hand. Nothing prunes them.
+The layout, down to how a trip directory is named and why the download
+URLs are not recorded, is in [archive(7)](docs/archive.md#exports).
+Exports accumulate and are managed by hand. Nothing prunes them.
 
 ## Credentials
 
@@ -509,9 +511,9 @@ retrying, and reporting, and it is worth being explicit about how:
 The timeout is also what bounds the worst latency sample the pacer can
 ever see, so one hung connection cannot define the pace for a whole run.
 
-An export will cost more per run than an import of the same account:
-a complete snapshot fetches every trip and every child every time,
-through a v2 API paginated at 100. The answer to that is cadence rather
+An export costs more per run than an import of the same account: a run
+fetches every trip and every child it was asked for, every time, through
+a v2 API paginated at 100. The answer to that is cadence rather
 than fetching less -- weekly or monthly is comfortable, hourly is not --
 which is why `backup` is the most patient of the three profiles.
 

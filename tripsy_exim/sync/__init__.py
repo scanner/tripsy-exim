@@ -8,9 +8,9 @@ reviewed and corrected before anything is posted.  The importer then writes
 canonical trips to Tripsy idempotently.  All policy lives here, so `api`
 stays a transport and `sources` stay parsers.
 
-The export half is not written yet and belongs here when it is: a
-complete dated snapshot of what Tripsy holds, written into an archive of
-its own rather than back into this one.
+The export half lives here too: a dated export of what Tripsy holds,
+written into a directory of its own rather than back into a staging
+archive.
 """
 
 # 3rd party imports
@@ -33,6 +33,15 @@ from tripsy_exim.sync.enrich import (
     Enrichment,
     Match,
     enrich,
+)
+from tripsy_exim.sync.exporter import (
+    EXPORT_SCHEMA_VERSION,
+    ExportOutcome,
+    Fetch,
+    document_filename,
+    export,
+    stamp_for,
+    trip_directory,
 )
 from tripsy_exim.sync.importer import (
     COLLECTION_ORDER,
@@ -101,6 +110,13 @@ from tripsy_exim.sync.worklist import (
 )
 
 __all__ = [
+    "EXPORT_SCHEMA_VERSION",
+    "ExportOutcome",
+    "Fetch",
+    "document_filename",
+    "export",
+    "stamp_for",
+    "trip_directory",
     "DISAGREE_KM",
     "Inference",
     "exact_key",

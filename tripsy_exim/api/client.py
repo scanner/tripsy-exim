@@ -56,6 +56,7 @@ COLLECTIONS: dict[str, str] = {
     "transportations": "transportation",
     "expenses": "expense",
     "collaborators": "collaborator",
+    "documents": "document",
 }
 
 # Trip-level duplicate suppression only engages above this length --

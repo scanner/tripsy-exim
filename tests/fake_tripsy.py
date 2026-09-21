@@ -41,7 +41,7 @@ import re
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 # 3rd party imports
 import httpx
@@ -58,7 +58,15 @@ COLLECTIONS: dict[str, str] = {
     "transportations": "transportation",
     "expenses": "expense",
     "collaborators": "collaborator",
+    "documents": "document",
 }
+
+# Where a document's bytes are served from.  Modelled on what the real
+# API serves: a pre-signed S3 link carrying AWSAccessKeyId, Signature and
+# Expires.  The shape is what matters here -- a host that is not the API,
+# and a query string that authenticates the request on its own.
+#
+DOCUMENT_HOST = "https://tripsy-fake.s3.amazonaws.invalid"
 
 # v2 pages at 100.  A real exported trip carries 121 events, so this is
 # reached on the first import rather than hypothetically.
@@ -111,6 +119,11 @@ class FakeTripsy:
             latency: Seconds each request takes to answer.
         """
         self.can_see_expenses = can_see_expenses
+        # What each document's pre-signed URL serves.  Held here rather
+        # than on the object so a test can hand a document real bytes
+        # without restating the rest of its payload.
+        #
+        self._document_bytes: dict[int, bytes] = {}
         self.page_size = page_size
         self.now = now or datetime(2027, 1, 1, tzinfo=UTC)
         self.clock = clock
@@ -228,6 +241,44 @@ class FakeTripsy:
 
     ####################################################################
     #
+    def put_document_content(self, document_id: int, content: bytes) -> None:
+        """Say what a document's pre-signed URL should serve."""
+        self._document_bytes[document_id] = content
+
+    ####################################################################
+    #
+    def document_content(self, url: str) -> bytes:
+        """
+        Serve what a pre-signed document URL points at.
+
+        This is not an API route and takes no token: it stands in for
+        the bucket, which is a different host answering a signature in
+        the query string.  It matches the `Fetch` protocol, so a test
+        hands it straight to the exporter.
+
+        Args:
+            url: The `temp_read_url` from a document payload.
+
+        Returns:
+            The bytes that document holds.
+
+        Raises:
+            KeyError: The URL names no document this store issued.
+        """
+        name = urlsplit(url).path.rsplit("/", 1)[-1]
+        document_id = int(name.partition(".")[0])
+        if not any(
+            document_id in held
+            for (_, collection), held in self._children.items()
+            if collection == "documents"
+        ):
+            raise KeyError(f"no document behind {url}")
+        return self._document_bytes.get(
+            document_id, f"%PDF-1.4 fake document {document_id}".encode()
+        )
+
+    ####################################################################
+    #
     def _store_trip(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Write a trip, assigning an id and the hidden update stamp."""
         trip_id = self._allocate()
@@ -262,7 +313,23 @@ class FakeTripsy:
             "updated_at": self._stamp(),
             **payload,
         }
-        if collection in ("hostings", "activities", "transportations"):
+        if collection == "documents":
+            # Documents carry none of the itinerary fields and three link
+            # arrays instead, naming the child object a file belongs to
+            # rather than the trip.
+            #
+            child.setdefault("title", f"document-{child_id}.pdf")
+            child.setdefault("file_type", "application/pdf")
+            child.setdefault("owner", self.owner_id)
+            child.setdefault(
+                "temp_read_url",
+                f"{DOCUMENT_HOST}/{child_id}.pdf"
+                "?AWSAccessKeyId=fake&Signature=fake&Expires=2000000000",
+            )
+            for link in ("activities", "hostings", "transportations"):
+                child.setdefault(link, [])
+            child.pop("trip", None)
+        elif collection in ("hostings", "activities", "transportations"):
             # The server computes no ordering: an object created without
             # a sort_order holds 0, and a whole trip imported without one
             # stacks on the same position.  Verified 2026-09-12.

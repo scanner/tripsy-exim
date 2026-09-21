@@ -37,8 +37,8 @@ One root holds every archive this tool keeps, of two kinds:
 ```
 
 An export is a different shape -- a document per trip rather than a file
-per object -- and is documented with the command that writes it. The rest
-of this page is about a staging archive.
+per object -- and is described under [EXPORTS](#exports) below. Until
+then this page is about a staging archive.
 
 For the root, first match wins:
 
@@ -78,7 +78,7 @@ same name typed precomposed do not find each other again -- and an
 archive name is retyped on every later command. Trip directories inside
 an export carry no such restriction: nothing retypes those.
 
-## LAYOUT
+## STAGING ARCHIVE LAYOUT
 
 ```text
 <root>/staged/<name>/
@@ -110,6 +110,82 @@ Objects created in the Tripsy app rather than staged here carry a
 
 Every file is JSON, indented, with keys sorted, so a diff between two
 runs is readable.
+
+## EXPORTS
+
+An export is what Tripsy held at one instant. It accumulates nothing: each
+run writes a fresh directory that reads on its own, and two runs are never
+compared.
+
+```text
+<root>/exports/<stamp>/
+  manifest.json                  when, and what was asked for
+  <start>--<end>--<id>/
+    trip.json                    the trip and all its children
+    documents/<id>-<title>       whatever was attached, as it was
+  quarantine/<key>.json          payloads the models would not take
+```
+
+The stamp is the UTC instant the run started, written without colons
+because not every filesystem takes one in a directory name.
+
+A trip directory is named to sort by travel date, since that is the order
+somebody reading a backup wants. The Tripsy id makes it unique: two trips
+can share a name and dates, and a pair recording one journey twice is
+exactly what [merge(1)](merge.md) exists for. A trip whose `has_dates` is
+false is named `undated--<id>` even when the date fields are populated --
+the flag is authoritative.
+
+Inside, a trip is **one document** rather than a file per object, because
+an export is read whole, by a person or by a program loading it, and never
+by this tool looking one object up. A staging archive is the other way
+round, which is why it keeps the other shape.
+
+```json
+{
+  "schema_version": 1,
+  "trip": { "id": 4071, "name": "Kyoto, May 2011" },
+  "transportations": [ ... ],
+  "hostings": [ ... ],
+  "documents": [ ... ]
+}
+```
+
+### Attachments
+
+Files attached in the app are downloaded into `documents/` beside the
+trip, named `<id>-<title>` so two files of one name cannot collide and a
+person can still tell them apart. The title keeps its extension, which is
+what makes the saved file open in the right thing.
+
+A document's entry in `trip.json` is the payload as the API sent it, with
+one field removed: `temp_read_url` is pre-signed and expires, so recording
+it would archive a link that is dead by the time anybody follows it. What
+is recorded instead is `file`, naming the copy on disk.
+
+The `activities`, `hostings` and `transportations` arrays on a document
+say which object it belongs to. A boarding pass belongs to a flight, not
+to a fortnight, and those arrays are the only thing that says so.
+
+### Whole or not at all
+
+A run builds into `.<stamp>.partial` beside the finished exports and moves
+it into place at the end. A stamp therefore never names a half-written
+run: an interrupted one leaves only the dotted directory, which the next
+run of that instant rebuilds rather than writes into.
+
+Two runs of the same second would want the same name. The second is
+refused rather than merged -- merging would make one directory two
+instants, which is the one thing an export must not be.
+
+### Scope
+
+`manifest.json` records what the run was asked for, because a partial
+export has to say it is one. Without it a directory cannot say whether it
+means "everything Tripsy held" or "these trips", and the two are read
+differently by anybody restoring from it.
+
+Nothing prunes exports. They accumulate and are managed by hand.
 
 ## REPORT
 
