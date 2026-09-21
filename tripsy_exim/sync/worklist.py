@@ -174,7 +174,7 @@ def export_rows(archive: Archive, trip_keys: list[str]) -> list[dict[str, Any]]:
         }
 
         for gap in gaps(archive, trip_key):
-            rows.append(_row(gap, name, by_identifier.get(gap.identifier)))
+            rows.append(row_for(gap, name, by_identifier.get(gap.identifier)))
     return rows
 
 
@@ -472,8 +472,14 @@ def _apply_correction(
 
 ####################################################################
 #
-def _row(gap: Gap, trip_name: str, obj: Child | None) -> dict[str, Any]:
-    """One gap, as an editable row."""
+def row_for(gap: Gap, trip_name: str, obj: Child | None) -> dict[str, Any]:
+    """
+    One gap, as an editable row.
+
+    Shared with `infer`, which fills rows in rather than leaving them
+    for a person -- so both produce the same shape and `apply_rows`
+    reads them the same way.
+    """
     row: dict[str, Any] = {
         "trip": trip_name,
         "trip_key": gap.trip_key,

@@ -297,14 +297,29 @@ than a TripIt reader's output.
 The staging archive lands in one directory, named by `--archive`, or
 `$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`.
 
-#### What is still manual
+#### Stage 2, in practice
 
-Stage 2 has the least tooling. The override format is documented in
-[archive(7)](docs/archive.md) and applied automatically on the way out,
-but authoring corrections today means reading `report.json`, finding a
-source uuid, and writing JSON by hand. Commands to generate a work-list
-and turn a filled-in one into overrides are planned, and they belong
-exactly here in the sequence -- between staging and uploading.
+[backfill(1)](docs/backfill.md) is what stage 2 is made of, and it runs
+in four steps between staging and uploading:
+
+```sh
+uv run tripsy-exim backfill infer --write   # what the archive knows
+uv run tripsy-exim backfill report          # what is left for you
+uv run tripsy-exim backfill export work.json
+uv run tripsy-exim backfill apply work.json --write
+```
+
+`infer` fills what the archive can work out from itself -- an airport
+one trip left unplaced was usually placed by another -- so the list a
+person reads is only what the archive could not answer. The rest is a
+JSON work-list: every row arrives pre-filled with what the object holds
+now, and only what you change is written, so a row you skip does nothing
+and the same file applied twice does nothing the second time.
+
+The override format underneath is documented in
+[archive(7)](docs/archive.md), and corrections are applied on the way
+out rather than written back to the staged files -- which is why
+re-staging never clobbers one.
 
 ### Exporting from Tripsy
 

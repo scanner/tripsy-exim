@@ -3,6 +3,8 @@
 ## SYNOPSIS
 
 ```text
+tripsy-exim backfill infer  [--archive DIRECTORY] [--disagree-km FLOAT]
+                            [--write | --dry-run] [TRIP]...
 tripsy-exim backfill report [--archive DIRECTORY]
                             [--population NAME]... [TRIP]...
 tripsy-exim backfill export FILE [--archive DIRECTORY]
@@ -30,9 +32,14 @@ back out, together with the objects Tripsy would have no way to place,
 and says what is still open -- so corrections are written against a list
 instead of against a directory of JSON files.
 
-`report` says what is open and writes nothing. `export` turns the same
-gaps into an editable file, and `apply` reads that file back as
-corrections. `infer` is not written yet.
+Run them in this order:
+
+1. **`infer`** fills what the archive can work out from itself, with no
+   human input. Run it first, so the list is shorter by the time you
+   read it.
+2. **`report`** says what is left. It writes nothing.
+3. **`export`** turns what is left into an editable file.
+4. **`apply`** reads that file back as corrections.
 
 ### The four populations
 
@@ -103,6 +110,67 @@ finishes soonest. One airport or station recurs across a whole corpus,
 so answering it once closes every gap that names it; the long tail of
 places seen exactly once is what is left afterwards. Ties are broken
 alphabetically, so the same archive prints the same work-list every run.
+
+## SELF-HEALING
+
+An export places nearly everything it carries -- 518 of 522 airport
+endpoints across the reference corpus. The four it missed named codes
+that *other segments had placed*. So for those, the answer was already
+on disk and no outside service had to be asked for it.
+
+`infer` does that lookup. For each endpoint the app cannot place, it
+takes the code, finds every position the archive records for that code,
+and fills in the one they agree on.
+
+**Only exact keys.** An airport code is three letters and nothing else,
+so two endpoints naming `NRT` are naming one airport. A station gives
+its name instead -- `Shin-Osaka Station` -- and free text is not a key:
+two spellings of one station are two keys, and one spelling can be two
+stations. Endpoints named in free text are skipped entirely rather than
+refused, because they were never candidates.
+
+**The commonest position, not the first**, so one odd record cannot move
+an airport.
+
+**A code that names a metropolitan area is refused outright.** `TYO` is
+Narita and Haneda, sixty kilometres apart; `OSA` is Kansai and Itami.
+These cannot be left to the agreement guard below, which only fires on a
+code the archive places more than once -- a metropolitan code seen a
+single time would otherwise be copied to whichever airport that one
+record happened to use. Right city, wrong airport, and silent about it.
+
+The list is a floor rather than a complete set: booking systems carry
+codes no standard agrees on. `QSF` is the San Francisco Bay Area in
+Sabre and ITA, and an airport in Algeria to everyone else. The guard
+below is what catches the rest.
+
+**A code observed in places far apart is refused**, not averaged. The
+modal rule protects against a stray record; it does nothing about a code
+genuinely used for two places, which is the realistic hazard.
+
+The `--disagree-km` default of 10 is measured against the two things it
+has to tell apart:
+
+| | distance |
+|---|---|
+| One airport's own published variants -- terminal, centroid, runway | ~1.4 km |
+| SFO to OAK, the closest pair a reused code could confuse | 17.3 km |
+
+Ten sits an order of magnitude above the first and well below the
+second. The Bay Area is what calibrated it: SFO to OAK is 17 km, OAK to
+SJC 47 km, SFO to SJC 49 km, so a looser threshold waves every pair
+through.
+
+A refusal costs nothing -- the endpoint stays open and shows up in
+`backfill report`, which is where it already was. A wrong placement is
+silent and goes through a one-way upload. So the guard errs tight, and
+a refusal says the distance it saw.
+
+> If your archive holds both a JSON export and `.ics` calendars, expect
+> some refusals. A calendar's coordinates name a destination city rather
+> than its terminal and can sit tens of kilometres from the export's --
+> a real disagreement about one place, which is exactly what the guard
+> is built to stop and hand to you.
 
 ## THE WORK-LIST
 
@@ -179,6 +247,12 @@ wrong answer.
 : Directory the staged trips are read from. Defaults to
   `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim/archive`.
 
+`--disagree-km FLOAT`
+: `infer` only. Refuse a code whose recorded positions sit further apart
+  than this. Default `50.0`. Not the same quantity as
+  [fix-locations(1)](fix-locations.md)'s `--far-km`, which measures a
+  geocoder's answer against a trip at a much looser 2000.
+
 `--population NAME`
 : Report only this kind of gap. Repeatable; the default is all four.
   One of `unclassified`, `guessed_timezone`, `skipped`, `unplaceable`.
@@ -215,8 +289,15 @@ Just the things a retype would fix:
 uv run tripsy-exim backfill report --population unclassified
 ```
 
-The round trip. Write the work-list, edit it, see what it would do, then
-do it:
+The whole loop, in order:
+
+```sh
+uv run tripsy-exim backfill infer --write
+uv run tripsy-exim backfill report
+```
+
+Then the part that needs you. Write the work-list, edit it, see what it
+would do, then do it:
 
 ```sh
 uv run tripsy-exim backfill export work.json
@@ -243,9 +324,9 @@ nothing are different answers, and the second is usually the wrong
 you would edit and apply to no effect, so saying "nothing is open" up
 front is the better answer.
 
-`backfill infer` is not written yet. When it is, it runs first -- it
-fills what the archive can work out from itself, with no human input, so
-the work-list is shorter by the time a person opens it.
+`infer` reads positions from the whole archive even when you name one
+trip, because the airport this trip left unplaced was very likely placed
+on another.
 
 ## SEE ALSO
 
