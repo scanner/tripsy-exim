@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 # Project imports
 from tests import tripit_builder as b
-from tests.cli.conftest import EARLIER, KYOTO, LATER, OSAKA
+from tests.cli.conftest import EARLIER, KYOTO_TRIP, LATER, OSAKA_TRIP
 from tripsy_exim.cli import main
 from tripsy_exim.secrets import SECRET_URL_ENV
 from tripsy_exim.store import Archive
@@ -93,8 +93,8 @@ class TestUploadCommand:
         )
 
         check.equal(result.exit_code, 0, result.output)
-        check.is_in(KYOTO, result.output)
-        check.is_not_in(OSAKA, result.output)
+        check.is_in(KYOTO_TRIP, result.output)
+        check.is_not_in(OSAKA_TRIP, result.output)
         check.is_in("1 trips", result.output)
 
     ####################################################################
