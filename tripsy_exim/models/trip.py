@@ -6,9 +6,12 @@ The canonical trip.
 `starts_at` and `ends_at` are plain dates here and UTC datetimes on every
 child object -- the API uses both and they are not interchangeable.
 
-Trips carry no `created_at` or `updated_at` in either API version, which is
-why an exporter's watermark would be the run's wall-clock time rather than
-anything read out of the data.
+Trips carry no `created_at` or `updated_at` in either API version, so
+nothing in a trip says when it last changed.  An export that wanted to ask
+would have had to use the run's own clock; taking a complete snapshot each
+run sidesteps the question.  The time is not lost by that -- a snapshot is
+written under the instant it was taken, so the data is dated even where
+the payload is not.
 """
 
 # system imports

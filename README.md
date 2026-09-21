@@ -43,11 +43,13 @@ and the override machinery were shaped against. The `.ics` path works and
 is tested, but it has seen far less real data, and a calendar can express
 less about a trip than the export can.
 
-Pulling a whole Tripsy account back down into the archive is **not
-written yet**. The pieces it needs are in place -- the API client takes an
-`updated_since` and the archive keeps a `last_export_at` watermark -- but
-there is no `sync/exporter.py` behind them and no command that calls one.
-Today the archive is filled by staging a source, not by reading Tripsy.
+Pulling a whole Tripsy account back down is **not written yet**: there is
+no `sync/exporter.py` and no command that calls one. Today the archive is
+filled by staging a source, not by reading Tripsy.
+
+The shape of it is settled, though. An export writes a complete dated
+snapshot into an archive of its own rather than updating one in place.
+See [Exporting from Tripsy](#exporting-from-tripsy).
 
 See [CHANGELOG.md](CHANGELOG.md) for what has actually shipped.
 
@@ -147,6 +149,13 @@ Staging is lossless: a parser writes what it inferred and nothing else, so
 re-staging a source never clobbers a decision made by hand. Decisions live
 in `overrides/`, keyed separately, and are laid over on the way out to
 Tripsy. See [archive(7)](docs/archive.md).
+
+There will eventually be two of these. This one is the *staging* archive:
+it records what a source gave us and is never written back to from
+Tripsy. The export side writes a second archive in the same format,
+holding what Tripsy actually holds -- including corrections people made
+in the app that no source can reproduce. The two diverging is the
+expected state, not drift to be reconciled.
 
 ## Identifiers, and why imports are idempotent
 
@@ -278,14 +287,14 @@ rewrite, and in the app it is hand-editing one object at a time.
 
 #### One format, both directions
 
-The archive is not an import staging area that the export side will
-duplicate. It is one provider-neutral format that both directions use:
-what a parser translates *into*, and what an export from Tripsy is read
-*back into*. That is why it is plain sorted JSON in durable storage rather
-than a scratch directory, and why [models(7)](docs/models.md) is written
-as a provider-neutral object model rather than as a TripIt reader's output.
+The two directions keep separate archives, as above, but not separate
+schemas. One provider-neutral format is what a parser translates *into*
+and what an export from Tripsy is written *as*. That is why it is plain
+sorted JSON in durable storage rather than a scratch directory, and why
+[models(7)](docs/models.md) is a provider-neutral object model rather
+than a TripIt reader's output.
 
-Everything lands in one directory, named by `--archive`, or
+The staging archive lands in one directory, named by `--archive`, or
 `$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`.
 
 #### What is still manual
@@ -299,7 +308,23 @@ exactly here in the sequence -- between staging and uploading.
 
 ### Exporting from Tripsy
 
-Not written yet. See [Status](#status).
+Not written yet, and when it is it will not be the import run backwards.
+
+Each run writes a **complete snapshot** under its own UTC timestamp, into
+an archive of its own. Deliberately not incremental: a snapshot is a
+point in time that reads on its own, deletion is simply absence from a
+complete run, and there is no watermark to keep correct. `--trip` narrows
+a run to a subset, and every snapshot records its own scope -- a partial
+run says nothing about the trips it did not ask for, and without that
+recorded, absence would read as deletion.
+
+Nothing in a trip says when it last changed -- Tripsy returns no
+`updated_at` on one -- so the timestamp a snapshot is written under is
+what dates the data inside it. Two snapshots compared then say what
+changed between those two instants, which is change detection that costs
+no requests and keeps no watermark correct.
+
+Snapshots accumulate and are managed by hand. Nothing prunes them.
 
 ## Credentials
 
@@ -434,9 +459,11 @@ retrying, and reporting, and it is worth being explicit about how:
 The timeout is also what bounds the worst latency sample the pacer can
 ever see, so one hung connection cannot define the pace for a whole run.
 
-An export, when it is written, will also be incremental: `updatedSince`
-reports trips changed directly *or* through their nested objects, so an
-unchanged trip need never be fetched twice.
+An export will cost more per run than an import of the same account:
+a complete snapshot fetches every trip and every child every time,
+through a v2 API paginated at 100. The answer to that is cadence rather
+than fetching less -- weekly or monthly is comfortable, hourly is not --
+which is why `backup` is the most patient of the three profiles.
 
 ## Documentation
 

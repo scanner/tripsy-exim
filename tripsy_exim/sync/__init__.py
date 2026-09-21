@@ -8,8 +8,9 @@ reviewed and corrected before anything is posted.  The importer then writes
 canonical trips to Tripsy idempotently.  All policy lives here, so `api`
 stays a transport and `sources` stay parsers.
 
-Pulling changes back into the archive incrementally is the half that is
-not written yet, and it belongs here when it is.
+The export half is not written yet and belongs here when it is: a
+complete dated snapshot of what Tripsy holds, written into an archive of
+its own rather than back into this one.
 """
 
 # 3rd party imports
