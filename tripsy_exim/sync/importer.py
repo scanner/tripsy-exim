@@ -823,6 +823,44 @@ def corrected(obj: Child, override: Override) -> Child:
 
 ####################################################################
 #
+def composed_children(archive: Archive, trip_key: str) -> list[Child]:
+    """
+    One trip's objects as they will be uploaded, corrections laid over.
+
+    Staging owns the files under a trip and a re-stage rewrites them, so
+    a correction is never written back to them: it lives in the trip's
+    override file and is laid over on the way out.  The staged object on
+    disk is therefore the *uncorrected* one, and anything asking what a
+    trip still lacks has to ask this rather than the disk -- otherwise a
+    field an earlier correction already filled reads as a gap again.
+
+    Additions are included.  An addition is as much a part of the trip as
+    a parsed record and carries the same gaps.
+
+    Absorption is not.  An absorbed trip uploads as part of the trip
+    absorbing it, but it remains its own staged trip with its own report
+    and its own overrides, and a correction against it belongs to it.
+
+    Args:
+        archive: The archive holding the staged trip.
+        trip_key: Key of the trip to read.
+
+    Returns:
+        The trip's own objects and its additions, corrected.
+    """
+    fixes = corrections(archive, trip_key)
+    objects = [
+        corrected(obj, fixes[str(obj.internal_identifier)])
+        if str(obj.internal_identifier) in fixes
+        else obj
+        for obj in staged_children(archive, trip_key)
+    ]
+    objects.extend(added(archive, trip_key))
+    return objects
+
+
+####################################################################
+#
 def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
     """
     Every object this trip uploads, its own and any it absorbs.
@@ -845,14 +883,7 @@ def _all_children(archive: Archive, trip_key: str) -> tuple[list[Child], int]:
     Returns:
         The objects to upload, and how many duplicates were left out.
     """
-    fixes = corrections(archive, trip_key)
-    own = [
-        corrected(obj, fixes[str(obj.internal_identifier)])
-        if str(obj.internal_identifier) in fixes
-        else obj
-        for obj in staged_children(archive, trip_key)
-    ]
-    own.extend(added(archive, trip_key))
+    own = composed_children(archive, trip_key)
 
     duplicates = 0
     seen: set[tuple[str, str, str]] = set()

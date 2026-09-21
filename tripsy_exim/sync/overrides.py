@@ -333,6 +333,36 @@ def read_index(archive: Archive, trip_key: str) -> dict[str, dict[str, str]]:
 
 ####################################################################
 #
+def source_uuids(archive: Archive, trip_key: str) -> dict[str, str]:
+    """
+    Map each staged object's identifier back to its source uuid.
+
+    The inverse of `read_index`, and the crossing anything authoring
+    corrections has to make: reading an object gives its identifier,
+    while an override is keyed by the uuid the object was minted from.
+    An identifier names at most one source record, so the inverse is a
+    map rather than a multimap.
+
+    Args:
+        archive: The archive holding the staged trip.
+        trip_key: Key of the staged trip.
+
+    Returns:
+        Identifier to source uuid.  A record the index names without an
+        identifier is left out, since nothing can reach it.
+
+    Raises:
+        FileNotFoundError: The trip has not been staged.
+    """
+    return {
+        str(located["identifier"]): uuid
+        for uuid, located in read_index(archive, trip_key).items()
+        if located.get("identifier")
+    }
+
+
+####################################################################
+#
 def apply_overrides(
     archive: Archive, trip_key: str, overrides: OverrideSet
 ) -> Applied:

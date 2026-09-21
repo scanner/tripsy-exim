@@ -37,6 +37,7 @@ from tripsy_exim.sync import (
     load_overrides,
     retyped,
     save_overrides,
+    source_uuids,
     stage,
 )
 
@@ -592,3 +593,42 @@ class TestIndex:
             uuid = str(uuid_from_uid(note.uid))
             check.is_in(uuid, index)
             check.equal(index[uuid]["identifier"], note.identifier)
+
+
+########################################################################
+########################################################################
+#
+class TestSourceUuids:
+    """Tests for reading the uuid map backwards."""
+
+    ####################################################################
+    #
+    def test_every_identifier_maps_back_to_its_uuid(
+        self, staged: Callable[..., Staged]
+    ) -> None:
+        """
+        GIVEN: a trip staged from a calendar of mixed kinds
+        WHEN:  its identifiers are mapped back to source uuids
+        THEN:  the result is the index inverted, entry for entry
+        """
+        trip = staged(items=6, lodging=2, flights=2)
+
+        back = source_uuids(trip.archive, trip.key)
+
+        index = json.loads(trip.trip.report_path.read_text())["index"]
+        check.equal(len(back), len(index))
+        for uuid, located in index.items():
+            check.equal(back[located["identifier"]], uuid)
+
+    ####################################################################
+    #
+    def test_an_unstaged_trip_has_nothing_to_read(
+        self, archive: Archive
+    ) -> None:
+        """
+        GIVEN: a trip key nothing was ever staged under
+        WHEN:  its identifiers are mapped back to source uuids
+        THEN:  the absent report is raised rather than read as empty
+        """
+        with pytest.raises(FileNotFoundError):
+            source_uuids(archive, "never-staged")

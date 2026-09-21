@@ -34,6 +34,7 @@ from tripsy_exim.sync.importer import (
     TripImport,
     added,
     child_ids_by_identifier,
+    composed_children,
     corrections,
     declare_merge,
     numbered,
@@ -1013,6 +1014,88 @@ class TestAdditions:
         nothing.
         """
         check.equal(added(ferry_trip.archive, ferry_trip.key), [])
+
+
+########################################################################
+########################################################################
+#
+class TestComposedChildren:
+    """Tests for reading a trip as it will be uploaded."""
+
+    ####################################################################
+    #
+    def test_a_correction_shows_here_and_not_on_disk(
+        self, ferry_trip: FerryTrip
+    ) -> None:
+        """
+        GIVEN: a staged trip with a correction against its one object
+        WHEN:  its objects are composed, and read off disk beside that
+        THEN:  only the composed ones carry the correction
+
+        Staging owns the files under a trip, so a correction is laid over
+        on the way out rather than written back.  Anything asking what a
+        trip still lacks has to ask the composed view, or a field an
+        earlier correction filled reads as a gap again.
+        """
+        ferry_trip.correct(name="Sado Kisen")
+
+        composed = composed_children(ferry_trip.archive, ferry_trip.key)
+        on_disk = list(staged_children(ferry_trip.archive, ferry_trip.key))
+
+        check.is_in("Sado Kisen", {obj.name for obj in composed})
+        check.is_not_in("Sado Kisen", {obj.name for obj in on_disk})
+
+    ####################################################################
+    #
+    def test_an_addition_is_composed_in(self, ferry_trip: FerryTrip) -> None:
+        """
+        GIVEN: a staged trip and an object added to it by hand
+        WHEN:  its objects are composed
+        THEN:  the addition is among them
+
+        An addition is as much a part of the trip as a parsed record and
+        carries the same gaps, but it is no file under the trip, so a
+        walk of the archive misses it.
+        """
+        ferry_trip.add(name="the shuttle", transportation_type="transfer")
+
+        composed = composed_children(ferry_trip.archive, ferry_trip.key)
+        on_disk = list(staged_children(ferry_trip.archive, ferry_trip.key))
+
+        check.equal(len(composed), len(on_disk) + 1)
+        check.is_in("the shuttle", {obj.name for obj in composed})
+
+    ####################################################################
+    #
+    def test_an_absorbed_trip_stays_its_own(self, archive: Archive) -> None:
+        """
+        GIVEN: one staged trip declared as absorbed by another
+        WHEN:  each trip's objects are composed
+        THEN:  neither gains the other's
+
+        An absorbed trip uploads as part of its target but remains its
+        own staged trip, with its own report and its own corrections, so
+        a correction against it is authored against it rather than
+        against the trip carrying it.
+        """
+        stage_export(
+            archive,
+            b.export(
+                b.trip(name="Kyoto, May 2011", objects=[b.lodging()]),
+                b.trip(
+                    name="Kyoto, May 2011",
+                    objects=[b.flight(), b.restaurant()],
+                ),
+            ),
+        )
+        smaller, larger = by_size(archive)
+        declare_merge(archive, smaller, larger)
+
+        for key in (smaller, larger):
+            check.equal(
+                len(composed_children(archive, key)),
+                len(list(staged_children(archive, key))),
+            )
 
 
 ########################################################################

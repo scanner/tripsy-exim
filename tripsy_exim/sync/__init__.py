@@ -14,6 +14,20 @@ its own rather than back into this one.
 """
 
 # 3rd party imports
+from tripsy_exim.sync.backfill import (
+    GUESSED_TIMEZONE,
+    POPULATIONS,
+    SKIPPED,
+    UNCLASSIFIED,
+    UNPLACEABLE,
+    Gap,
+    Place,
+    by_population,
+    by_recurrence,
+    gaps,
+    places,
+    uuids_by_identifier,
+)
 from tripsy_exim.sync.enrich import (
     DIVERGENCE_KM,
     Enrichment,
@@ -30,6 +44,7 @@ from tripsy_exim.sync.importer import (
     TripPlan,
     Unplaced,
     child_ids_by_identifier,
+    composed_children,
     in_travel_order,
     mark_uploaded,
     numbered,
@@ -54,6 +69,7 @@ from tripsy_exim.sync.overrides import (
     overrides_path,
     retyped,
     save_overrides,
+    source_uuids,
 )
 from tripsy_exim.sync.staging import (
     REPORT_FILENAME,
@@ -68,6 +84,18 @@ from tripsy_exim.sync.staging import (
 )
 
 __all__ = [
+    "GUESSED_TIMEZONE",
+    "POPULATIONS",
+    "SKIPPED",
+    "UNCLASSIFIED",
+    "UNPLACEABLE",
+    "Gap",
+    "Place",
+    "by_population",
+    "by_recurrence",
+    "gaps",
+    "places",
+    "uuids_by_identifier",
     "COLLECTION_ORDER",
     "UPLOADED",
     "OVERRIDES_DIRNAME",
@@ -106,7 +134,9 @@ __all__ = [
     "overrides_path",
     "retyped",
     "save_overrides",
+    "source_uuids",
     "stage",
+    "composed_children",
     "staged_children",
     "staged_trip",
     "stage_export",

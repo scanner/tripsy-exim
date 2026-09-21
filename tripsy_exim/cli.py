@@ -53,6 +53,13 @@ from tripsy_exim.secrets import (
 )
 from tripsy_exim.store import ARCHIVE_ENV, Archive, default_root
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
+from tripsy_exim.sync.backfill import (
+    POPULATIONS,
+    Gap,
+    by_population,
+    by_recurrence,
+    gaps,
+)
 from tripsy_exim.sync.importer import (
     declare_merge,
     in_travel_order,
@@ -1127,6 +1134,106 @@ def fix_locations_command(
         f"{cache.hits} answered from the cache, {cache.misses} asked of "
         f"{geocoder}"
     )
+
+
+####################################################################
+#
+@main.group("backfill")
+def backfill_group() -> None:
+    """
+    Author corrections against what the archive already knows.
+
+    Staging records where the parser was unsure and moves on, because a
+    parse that stopped to ask would never finish.  These commands read
+    those doubts back out, together with the objects the app would have
+    no way to place, so corrections are written against a list rather
+    than against a directory of JSON files.
+    """
+
+
+####################################################################
+#
+@backfill_group.command("report")
+@click.option(
+    "--archive",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory the staged trips are read from.  Defaults to "
+        f"${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim/archive."
+    ),
+)
+@click.option(
+    "--population",
+    "wanted_populations",
+    multiple=True,
+    type=click.Choice(POPULATIONS),
+    help="Report only these kinds of gap.  Repeatable; default is all.",
+)
+@click.argument("wanted", nargs=-1)
+def backfill_report_command(
+    archive_root: Path | None,
+    wanted_populations: tuple[str, ...],
+    wanted: tuple[str, ...],
+) -> None:
+    """
+    Say what the staged trips still need a person for.
+
+    Nothing is written.  Trips are named by key or by part of a name;
+    naming none reports the whole archive.
+
+    Gaps are counted against each trip as that trip would upload, with
+    any corrections already authored laid over, so answering one and
+    running again reports one fewer rather than the same list.
+
+    The places are listed commonest first, because that is the order
+    that finishes soonest: one airport or station recurs across a whole
+    corpus, and answering it once closes every gap that names it.
+    """
+    archive = staged_archive(archive_root)
+
+    if wanted:
+        try:
+            keys = [resolve_trip_key(archive, needle) for needle in wanted]
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    else:
+        keys = archive.trip_keys()
+    if not keys:
+        raise click.ClickException(f"no staged trips in {archive.root}")
+
+    asked = set(wanted_populations) or set(POPULATIONS)
+    found: list[Gap] = []
+    for key in in_travel_order(archive, keys):
+        rows = [g for g in gaps(archive, key) if g.population in asked]
+        if not rows:
+            continue
+        found.extend(rows)
+
+        trip = staged_trip(archive, key)
+        click.echo(f"\n{str(getattr(trip, 'name', '') or key)}")
+        for population, in_population in by_population(rows).items():
+            click.echo(
+                f"  {population:18} {len(in_population):4}  "
+                f"{in_population[0].remedy}"
+            )
+
+    if not found:
+        click.echo(f"{len(keys)} trips, nothing open")
+        return
+
+    click.echo("\nby place, commonest first:")
+    for label, rows in by_recurrence(found):
+        endpoints = ", ".join(
+            sorted({row.endpoint for row in rows if row.endpoint})
+        )
+        click.echo(
+            f"  {len(rows):4}x  {label[:44]:44} "
+            f"{endpoints or rows[0].population}"
+        )
+
+    click.echo(f"\n{len(found)} gaps across {len(keys)} trips")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing has been released yet. What the project can currently do is
-described in [README.md](README.md); entries here start at the first
-release, since there is no earlier version for a reader to be told what
-changed from.
+Nothing has been released yet; what the project can currently do is
+described in [README.md](README.md).
+
+### Added
+
+- `backfill report` says what the staged trips still need a person for,
+  with the places listed commonest first.
