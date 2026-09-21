@@ -95,7 +95,7 @@ from tripsy_exim.sync.worklist import (
     Outcome,
     WorkListError,
     apply_rows,
-    export_rows,
+    draft_rows,
     read_worklist,
     write_worklist,
 )
@@ -111,7 +111,7 @@ __all__ = [
     "Outcome",
     "WorkListError",
     "apply_rows",
-    "export_rows",
+    "draft_rows",
     "read_worklist",
     "write_worklist",
     "GUESSED_TIMEZONE",

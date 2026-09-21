@@ -4,7 +4,7 @@
 The editable work-list, and reading it back as corrections.
 
 `backfill report` says what is open; this is how a person answers it.
-`export` writes one row per gap, `apply` reads the rows back and turns
+`draft` writes one row per gap, `apply` reads the rows back and turns
 them into overrides.  In between, the file is edited by hand -- which is
 what every decision here is shaped by.
 
@@ -148,7 +148,7 @@ def field_names(gap: Gap, obj: Child | None) -> tuple[str, ...]:
 
 ####################################################################
 #
-def export_rows(archive: Archive, trip_keys: list[str]) -> list[dict[str, Any]]:
+def draft_rows(archive: Archive, trip_keys: list[str]) -> list[dict[str, Any]]:
     """
     One row per open gap, ready to be edited.
 
@@ -187,7 +187,7 @@ def write_worklist(
     Write a work-list to disk.
 
     The archive root travels with it so `apply` can refuse a file
-    exported from somewhere else -- the uuids would mean nothing, and
+    drafted somewhere else -- the uuids would mean nothing, and
     the failure would otherwise read as "no rows matched".
 
     Args:
@@ -222,7 +222,7 @@ def read_worklist(path: Path, archive: Archive) -> list[dict[str, Any]]:
 
     Raises:
         WorkListError: The file is unreadable, of another version, or
-            was exported from a different archive.
+            was drafted from a different archive.
     """
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -241,7 +241,7 @@ def read_worklist(path: Path, archive: Archive) -> list[dict[str, Any]]:
     came_from = str(document.get("archive") or "")
     if came_from and Path(came_from) != archive.root:
         raise WorkListError(
-            f"{path} was exported from {came_from}, not {archive.root}"
+            f"{path} was drafted from {came_from}, not {archive.root}"
         )
 
     rows = document.get("rows")

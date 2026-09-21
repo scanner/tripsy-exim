@@ -172,7 +172,7 @@ def walkthrough(
     step("backfill", "report")
 
     # 5. Answer it.
-    step("backfill", "export", str(work_list))
+    step("backfill", "draft", str(work_list))
     _answer(work_list)
     step("backfill", "apply", str(work_list))
     step("backfill", "apply", str(work_list), "--write")
@@ -351,7 +351,7 @@ class TestImportingGuide:
             "stage-export",
             "backfill infer",
             "backfill report",
-            "backfill export",
+            "backfill draft",
             "backfill apply",
             "upload",
             "verify",

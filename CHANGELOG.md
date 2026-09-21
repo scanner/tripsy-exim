@@ -17,7 +17,7 @@ described in [README.md](README.md).
   [docs/importing.md](docs/importing.md), with a worked example.
 - `backfill report` says what the staged trips still need a person for,
   with the places listed commonest first.
-- `backfill export` writes an editable work-list of what is open, and
+- `backfill draft` writes an editable work-list of what is open, and
   `backfill apply` reads it back as corrections.
 - `backfill infer` places an endpoint from an airport code the archive
   already positions elsewhere, refusing a code that names two places

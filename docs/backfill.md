@@ -7,7 +7,7 @@ tripsy-exim backfill infer  [--archive DIRECTORY] [--disagree-km FLOAT]
                             [--write | --dry-run] [TRIP]...
 tripsy-exim backfill report [--archive DIRECTORY]
                             [--population NAME]... [TRIP]...
-tripsy-exim backfill export FILE [--archive DIRECTORY]
+tripsy-exim backfill draft  FILE [--archive DIRECTORY]
                             [--population NAME]... [TRIP]...
 tripsy-exim backfill apply  FILE [--archive DIRECTORY]
                             [--write | --dry-run]
@@ -38,7 +38,7 @@ Run them in this order:
    human input. Run it first, so the list is shorter by the time you
    read it.
 2. **`report`** says what is left. It writes nothing.
-3. **`export`** turns what is left into an editable file.
+3. **`draft`** turns what is left into an editable file.
 4. **`apply`** reads that file back as corrections.
 
 ### The four populations
@@ -174,7 +174,7 @@ a refusal says the distance it saw.
 
 ## THE WORK-LIST
 
-`export` writes one JSON row per open gap. Each row carries the source
+`draft` writes one JSON row per open gap. Each row carries the source
 uuid a correction is keyed by, the model field names it would set, and
 the values the object holds right now:
 
@@ -208,7 +208,7 @@ Three conventions, all of them about telling *not answered* apart from
 
 So a row you do not touch does nothing, and running the same file twice
 does nothing the second time. That is what makes the loop safe to repeat
--- export, fill in what you know, apply, and go round again.
+-- draft, fill in what you know, apply, and go round again.
 
 A row's shape depends on its population. `unplaceable` and
 `guessed_timezone` rows carry `fields`; `unclassified` rows carry a
@@ -237,7 +237,7 @@ corrections in one file, so rows are grouped by trip before anything is
 written.
 
 The file records the archive it came from, and `apply` refuses one
-exported from somewhere else. Applied anyway it would match no uuids and
+drafted somewhere else. Applied anyway it would match no uuids and
 report that nothing needed doing, which is a true statement and the
 wrong answer.
 
@@ -262,7 +262,7 @@ wrong answer.
   whole archive.
 
 `FILE`
-: The work-list. `export` writes it, `apply` reads it.
+: The work-list. `draft` writes it, `apply` reads it.
 
 `--write`, `--dry-run`
 : `apply` only. Dry run by default, matching [upload(1)](upload.md) and
@@ -300,7 +300,7 @@ Then the part that needs you. Write the work-list, edit it, see what it
 would do, then do it:
 
 ```sh
-uv run tripsy-exim backfill export work.json
+uv run tripsy-exim backfill draft work.json
 $EDITOR work.json
 uv run tripsy-exim backfill apply work.json
 uv run tripsy-exim backfill apply work.json --write
@@ -310,7 +310,7 @@ One trip's placing gaps on their own, which is the usual way in -- the
 repeated airports first, since answering one closes every gap naming it:
 
 ```sh
-uv run tripsy-exim backfill export work.json --population unplaceable 'Kyoto'
+uv run tripsy-exim backfill draft work.json --population unplaceable 'Kyoto'
 ```
 
 ## NOTES
@@ -320,7 +320,7 @@ rather than an empty report: having nothing open and having staged
 nothing are different answers, and the second is usually the wrong
 `--archive`.
 
-`export` refuses to write an empty work-list. A file with no rows is one
+`draft` refuses to write an empty work-list. A file with no rows is one
 you would edit and apply to no effect, so saying "nothing is open" up
 front is the better answer.
 

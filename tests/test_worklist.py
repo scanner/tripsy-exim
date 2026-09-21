@@ -8,7 +8,7 @@ what matters here is what survives that: a row someone filled in, a row
 they left alone, a value they typed as text that has to become a number,
 and a second run over the same file doing nothing at all.
 
-`edited` is how a test says what a person did to the file -- it exports,
+`edited` is how a test says what a person did to the file -- it drafts,
 hands the rows to a callback, and applies the result.
 """
 
@@ -42,7 +42,7 @@ from tripsy_exim.sync.worklist import (
     Outcome,
     WorkListError,
     apply_rows,
-    export_rows,
+    draft_rows,
     field_names,
     read_worklist,
     write_worklist,
@@ -59,10 +59,10 @@ NARITA_ADDRESS = "Narita International Airport"
 #
 @pytest.fixture
 def rows_for(archive: Archive) -> Callable[[str], list[dict[str, Any]]]:
-    """The work-list rows one staged trip would export."""
+    """The work-list rows drafted for one staged trip."""
 
     def build(trip_key: str) -> list[dict[str, Any]]:
-        return export_rows(archive, [trip_key])
+        return draft_rows(archive, [trip_key])
 
     return build
 
@@ -74,7 +74,7 @@ def edited(
     archive: Archive, rows_for: Callable[[str], list[dict[str, Any]]]
 ) -> Callable[..., Outcome]:
     """
-    Export a trip, let a test edit the rows, then apply them.
+    Draft a trip, let a test edit the rows, then apply them.
 
     This is the whole round trip in one call, because every test here is
     about what an edit does rather than about the two halves separately.
@@ -105,7 +105,7 @@ def fill_departures(rows: list[dict[str, Any]]) -> None:
 ########################################################################
 ########################################################################
 #
-class TestExport:
+class TestDraft:
     """Tests for writing the work-list out."""
 
     ####################################################################
@@ -115,7 +115,7 @@ class TestExport:
     ) -> None:
         """
         GIVEN: a trip with unplaceable endpoints
-        WHEN:  the work-list is exported
+        WHEN:  the work-list is drafted
         THEN:  each row names the model fields, prefixed by its endpoint
 
         Real field names rather than logical ones is what makes applying
@@ -142,7 +142,7 @@ class TestExport:
     ) -> None:
         """
         GIVEN: a trip whose endpoints carry neither address nor position
-        WHEN:  the work-list is exported
+        WHEN:  the work-list is drafted
         THEN:  every offered field is blank
 
         Blank is not an accident here -- it is what the object holds.
@@ -160,7 +160,7 @@ class TestExport:
         self, unplaceable_trip: str, rows_for: Callable[..., list]
     ) -> None:
         """
-        GIVEN: an exported work-list
+        GIVEN: a drafted work-list
         WHEN:  a row is read
         THEN:  it carries the uuid a correction is keyed by
 
@@ -186,7 +186,7 @@ class TestExport:
         """
         path = tmp_path / "work.json"
 
-        write_worklist(path, archive, export_rows(archive, [unplaceable_trip]))
+        write_worklist(path, archive, draft_rows(archive, [unplaceable_trip]))
 
         document = json.loads(path.read_text())
         check.equal(document["version"], VERSION)
@@ -237,10 +237,10 @@ class TestApply:
         WHEN:  the very same rows are applied again
         THEN:  nothing is written and they read as already correct
 
-        The same file, deliberately, rather than a fresh export: an
-        export taken afterwards would no longer carry the answered rows
-        at all, which proves something different.  Only what differs is
-        written, so a re-run over a file somebody kept is a no-op.
+        The same file, deliberately, rather than a fresh draft: a draft
+        taken afterwards would no longer carry the answered rows at all,
+        which proves something different.  Only what differs is written,
+        so a re-run over a file somebody kept is a no-op.
         """
         rows = rows_for(unplaceable_trip)
         fill_departures(rows)
@@ -462,7 +462,7 @@ class TestReadWorkList:
         self, unplaceable_trip: str, archive: Archive, tmp_path: Path
     ) -> None:
         """
-        GIVEN: a work-list exported from a different archive
+        GIVEN: a work-list drafted from a different archive
         WHEN:  it is read
         THEN:  it is refused, naming both archives
 
@@ -470,7 +470,7 @@ class TestReadWorkList:
         needed doing, which is the wrong answer to the wrong question.
         """
         path = tmp_path / "work.json"
-        write_worklist(path, archive, export_rows(archive, [unplaceable_trip]))
+        write_worklist(path, archive, draft_rows(archive, [unplaceable_trip]))
 
         elsewhere = Archive(tmp_path / "elsewhere")
 
@@ -521,7 +521,7 @@ class TestReadWorkList:
         THEN:  the rows are what was written
         """
         path = tmp_path / "work.json"
-        rows = export_rows(archive, [unplaceable_trip])
+        rows = draft_rows(archive, [unplaceable_trip])
 
         write_worklist(path, archive, rows)
 
@@ -705,7 +705,7 @@ class TestGuessedTimezone:
     ) -> None:
         """
         GIVEN: a trip whose event inherited a neighbour's timezone
-        WHEN:  the work-list is exported
+        WHEN:  the work-list is drafted
         THEN:  the row shows the guess rather than a blank
 
         Every other population arrives empty.  This one has to show what
