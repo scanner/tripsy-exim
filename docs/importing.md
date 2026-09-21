@@ -115,7 +115,7 @@ if you want more than the one-line version.
 ## 5. Answer it
 
 ```sh
-uv run tripsy-exim backfill export work.json
+uv run tripsy-exim backfill draft work.json
 ```
 
 Open `work.json` in whatever you like -- a text editor, or a tool built
@@ -273,7 +273,7 @@ by place, commonest first:
 
 1 gap across 2 trips
 
-$ tripsy-exim backfill export work.json
+$ tripsy-exim backfill draft work.json
 1 rows written to work.json
 Edit it, then: tripsy-exim backfill apply work.json --write
 

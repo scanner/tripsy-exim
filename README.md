@@ -336,7 +336,7 @@ in four steps between staging and uploading:
 ```sh
 uv run tripsy-exim backfill infer --write   # what the archive knows
 uv run tripsy-exim backfill report          # what is left for you
-uv run tripsy-exim backfill export work.json
+uv run tripsy-exim backfill draft work.json
 uv run tripsy-exim backfill apply work.json --write
 ```
 

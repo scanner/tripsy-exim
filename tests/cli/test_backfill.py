@@ -219,7 +219,7 @@ class TestBackfillRoundTrip:
 
     ####################################################################
     #
-    def test_export_then_apply_closes_the_gap(
+    def test_draft_then_apply_closes_the_gap(
         self,
         unplaceable: Path,
         runner: CliRunner,
@@ -228,18 +228,18 @@ class TestBackfillRoundTrip:
     ) -> None:
         """
         GIVEN: an archive with unplaceable endpoints
-        WHEN:  the work-list is exported, filled in and applied
+        WHEN:  the work-list is drafted, filled in and applied
         THEN:  the report no longer lists what was answered
 
         The whole point of the pair, end to end: nothing else proves
-        that what `export` writes is what `apply` can read.
+        that what `draft` writes is what `apply` can read.
         """
         work = tmp_path / "work.json"
         written = runner.invoke(
             main,
             [
                 "backfill",
-                "export",
+                "draft",
                 str(work),
                 "--archive",
                 str(unplaceable),
@@ -290,7 +290,7 @@ class TestBackfillRoundTrip:
         work = tmp_path / "work.json"
         runner.invoke(
             main,
-            ["backfill", "export", str(work), "--archive", str(unplaceable)],
+            ["backfill", "draft", str(work), "--archive", str(unplaceable)],
         )
         document = json.loads(work.read_text())
         for row in document["rows"]:
@@ -308,12 +308,12 @@ class TestBackfillRoundTrip:
 
     ####################################################################
     #
-    def test_export_refuses_when_nothing_is_open(
+    def test_draft_refuses_when_nothing_is_open(
         self, staged: Callable[..., Path], runner: CliRunner, tmp_path: Path
     ) -> None:
         """
         GIVEN: an archive whose trip places everything
-        WHEN:  a work-list is exported
+        WHEN:  a work-list is drafted
         THEN:  it fails rather than writing an empty file
 
         An empty work-list is a file somebody would then edit and apply
@@ -323,7 +323,7 @@ class TestBackfillRoundTrip:
 
         result = runner.invoke(
             main,
-            ["backfill", "export", str(work), "--archive", str(staged())],
+            ["backfill", "draft", str(work), "--archive", str(staged())],
         )
 
         check.equal(result.exit_code, 1)
@@ -349,7 +349,7 @@ class TestBackfillRoundTrip:
         work = tmp_path / "work.json"
         runner.invoke(
             main,
-            ["backfill", "export", str(work), "--archive", str(unplaceable)],
+            ["backfill", "draft", str(work), "--archive", str(unplaceable)],
         )
 
         elsewhere = tmp_path / "elsewhere"
@@ -368,7 +368,7 @@ class TestBackfillRoundTrip:
         )
 
         check.equal(result.exit_code, 1)
-        check.is_in("was exported from", result.output)
+        check.is_in("was drafted from", result.output)
 
 
 ########################################################################

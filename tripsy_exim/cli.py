@@ -82,7 +82,7 @@ from tripsy_exim.sync.infer import (
 from tripsy_exim.sync.worklist import (
     WorkListError,
     apply_rows,
-    export_rows,
+    draft_rows,
     read_worklist,
     write_worklist,
 )
@@ -1273,7 +1273,7 @@ def backfill_report_command(
 
 ####################################################################
 #
-@backfill_group.command("export")
+@backfill_group.command("draft")
 @click.argument("destination", type=click.Path(dir_okay=False, path_type=Path))
 @click.option(
     "--archive",
@@ -1293,7 +1293,7 @@ def backfill_report_command(
     help="Write rows for only these kinds of gap.  Repeatable.",
 )
 @click.argument("wanted", nargs=-1)
-def backfill_export_command(
+def backfill_draft_command(
     destination: Path,
     archive_root: Path | None,
     wanted_populations: tuple[str, ...],
@@ -1326,7 +1326,7 @@ def backfill_export_command(
     asked = set(wanted_populations) or set(POPULATIONS)
     rows = [
         row
-        for row in export_rows(archive, in_travel_order(archive, keys))
+        for row in draft_rows(archive, in_travel_order(archive, keys))
         if row.get("population") in asked
     ]
     if not rows:
