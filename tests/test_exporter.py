@@ -34,6 +34,7 @@ from tripsy_exim.sync.exporter import (
     ExportOutcome,
     document_filename,
     export,
+    only_one_run,
     stamp_for,
     trip_directory,
 )
@@ -601,6 +602,49 @@ class TestQuarantine:
             "not a number",
         )
         check.equal(outcome.trips, 1, "the run finished anyway")
+
+
+########################################################################
+########################################################################
+#
+class TestTheLock:
+    """Tests that two runs cannot write at once."""
+
+    ####################################################################
+    #
+    def test_one_holder_at_a_time(self, tmp_path: Path) -> None:
+        """
+        GIVEN: a run holding the exports directory
+        WHEN:  another asks for it
+        THEN:  it is refused rather than made to wait
+
+        A scheduled export and one started by hand can land together.
+        The second has nothing to do, so it is told at once instead of
+        queueing behind a run that may take a long time.
+        """
+        with only_one_run(tmp_path):
+            with pytest.raises(BlockingIOError):
+                with only_one_run(tmp_path):
+                    pass
+
+    ####################################################################
+    #
+    def test_the_lock_goes_away_with_the_run(self, tmp_path: Path) -> None:
+        """
+        GIVEN: a run that has finished
+        WHEN:  another asks for the same directory
+        THEN:  it gets it
+
+        The lock is held on an open descriptor rather than by the file
+        existing, so it is released however the run ends -- crash
+        included.  A lock file left behind cannot wedge every run after
+        it, which is the failure nobody diagnoses at 3am.
+        """
+        with only_one_run(tmp_path):
+            pass
+
+        with only_one_run(tmp_path):
+            pass
 
 
 ########################################################################

@@ -13,6 +13,13 @@ described in [README.md](README.md).
 
 ### Added
 
+- `export` takes a dated copy of what Tripsy holds: one directory per
+  run, one per trip inside it, each with the trip and its children in a
+  single document and whatever files are attached to it in the app.
+  Say what to take with `--all`, `--trip`, `--glob` and a `--from`/`--to`
+  window; asking for nothing is refused. Quiet by default for cron, with
+  exit 2 reserved for "another run is going" so a scheduler can tell that
+  apart from a failure. See [export(1)](docs/export.md).
 - Staging archives are named. `--archive NAME` picks which one a command
   works on, defaulting to `staged`, so a scratch archive and a real
   import can sit side by side.

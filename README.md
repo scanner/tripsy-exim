@@ -43,12 +43,10 @@ and the override machinery were shaped against. The `.ics` path works and
 is tested, but it has seen far less real data, and a calendar can express
 less about a trip than the export can.
 
-Pulling a whole Tripsy account back down is **half written**:
-`sync/exporter.py` writes an export, and no command calls it yet. Today
-the archive is filled by staging a source, not by reading Tripsy.
-
-An export writes a dated directory of its own rather than updating an
-archive in place. See [Exporting from Tripsy](#exporting-from-tripsy).
+Pulling a whole Tripsy account back down **works**:
+[export(1)](docs/export.md) writes a dated copy of what the account
+holds, into a directory of its own rather than back into a staging
+archive. See [Exporting from Tripsy](#exporting-from-tripsy).
 
 See [CHANGELOG.md](CHANGELOG.md) for what has actually shipped.
 
@@ -360,6 +358,17 @@ re-staging never clobbers one.
 Not the import run backwards. An export is a backup: what Tripsy held at
 one instant, written whole.
 
+```sh
+uv run tripsy-exim export --all
+uv run tripsy-exim export --glob 'Japan*' --from 2020-01-01
+```
+
+Say what to take -- `--all`, or name trips with `--trip` and `--glob`,
+or narrow to a window with `--from` and `--to`. Asking for nothing is
+refused, since a backup command whose bare form meant "everything" will
+eventually be run by somebody who meant less. [export(1)](docs/export.md)
+has the rest.
+
 Each run writes a dated directory under `<root>/exports/`, one
 subdirectory per trip, each holding a single `trip.json` and whatever
 files were attached to it in the app. Deliberately not incremental and
@@ -531,6 +540,8 @@ all share. Start with [docs/README.md](docs/README.md).
 | [upload(1)](docs/upload.md)               | Send staged trips to Tripsy                               |
 | [verify(1)](docs/verify.md)               | Read them back and compare against the plan               |
 | [fix-locations(1)](docs/fix-locations.md) | Geocode what Tripsy left without a position               |
+| [backfill(1)](docs/backfill.md)           | Say what the staged trips still need a person for         |
+| [export(1)](docs/export.md)               | Take a dated copy of what Tripsy holds                    |
 | [models(7)](docs/models.md)               | The pydantic object model, and how it maps to Tripsy's    |
 | [fake-api(7)](docs/fake-api.md)           | The in-memory Tripsy API the tests run against            |
 | [archive(7)](docs/archive.md)             | The archive on disk, identifiers, overrides, the manifest |

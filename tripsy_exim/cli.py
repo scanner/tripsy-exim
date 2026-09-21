@@ -17,6 +17,7 @@ import os
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,12 +29,14 @@ from dotenv import find_dotenv, load_dotenv
 # Project imports
 from tripsy_exim import __version__
 from tripsy_exim.api import (
+    BACKUP,
     IMPORT,
     INTERACTIVE,
     PacingProfile,
     TokenAuth,
     TripsyClient,
 )
+from tripsy_exim.api.errors import TripsyError
 from tripsy_exim.geocode import (
     Cache,
     far_from,
@@ -58,6 +61,7 @@ from tripsy_exim.store import (
     STAGED_DIR,
     Archive,
     default_root,
+    exports_path,
     staged_path,
 )
 from tripsy_exim.sync import TRIP_INDEX, stage_export_file, stage_file
@@ -67,6 +71,12 @@ from tripsy_exim.sync.backfill import (
     by_population,
     by_recurrence,
     gaps,
+)
+from tripsy_exim.sync.exporter import (
+    Selection,
+    default_fetch,
+    export,
+    only_one_run,
 )
 from tripsy_exim.sync.importer import (
     declare_merge,
@@ -1472,6 +1482,148 @@ def backfill_infer_command(
             click.echo(f"  refused  {label}: {why}")
     if outcome.written and not write:
         click.echo("\nNothing was saved.  Pass --write to save it.")
+
+
+####################################################################
+#
+@main.command("export")
+@click.option(
+    "--archive-root",
+    "archive_root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Directory holding the staging archives and the exports.  "
+        f"Defaults to ${ARCHIVE_ENV}, or ~/.local/share/tripsy-exim."
+    ),
+)
+@click.option(
+    "--all",
+    "everything",
+    is_flag=True,
+    default=False,
+    help="Export every trip the account holds.",
+)
+@click.option(
+    "--trip",
+    "wanted",
+    multiple=True,
+    help=(
+        "Export this trip, by Tripsy id or by part of its name.  Repeatable."
+    ),
+)
+@click.option(
+    "--glob",
+    default=None,
+    help="Export trips whose name matches this pattern, e.g. 'Japan*'.",
+)
+@click.option(
+    "--from",
+    "since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Export trips that were still running on or after this day.",
+)
+@click.option(
+    "--to",
+    "until",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Export trips that had started on or before this day.",
+)
+@click.option("--username", default=None, help="Tripsy account username.")
+@click.option("--password", default=None, help="Tripsy account password.")
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Name every trip written.  Quiet by default, for cron.",
+)
+def export_command(
+    archive_root: Path | None,
+    everything: bool,
+    wanted: tuple[str, ...],
+    glob: str | None,
+    since: datetime | None,
+    until: datetime | None,
+    username: str | None,
+    password: str | None,
+    verbose: bool,
+) -> None:
+    """
+    Write a dated export of what Tripsy holds.
+
+    Each run writes its own directory under the archive root, named for
+    the instant it started, holding one directory per trip.  Nothing is
+    compared against an earlier run and nothing is pruned: a backup is
+    made, not reconciled.
+
+    Say what to take.  `--all` is every trip; `--trip` and `--glob` name
+    them; `--from` and `--to` narrow whatever was named to trips that
+    were under way in that window.  Asking for nothing is refused.
+
+    Quiet unless something is written, so a scheduled run that changes
+    nothing sends no mail.  Exits 2 when another run holds the lock,
+    which is a thing to skip rather than a failure to report.
+    """
+    try:
+        selection = Selection(
+            everything=everything,
+            trips=tuple(wanted),
+            glob=glob,
+            since=since.date() if since else None,
+            until=until.date() if until else None,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    root = (
+        Path(archive_root).expanduser()
+        if archive_root is not None
+        else default_root()
+    )
+    destination = exports_path(root)
+
+    try:
+        with only_one_run(destination):
+            with open_session(username, password, profile=BACKUP) as client:
+                chosen = selection.select(client.iter_trips())
+                if not chosen:
+                    raise click.ClickException(
+                        "nothing matched; no export written"
+                    )
+                outcome = export(
+                    client,
+                    destination,
+                    chosen,
+                    scope=selection.scope,
+                    fetch=default_fetch,
+                )
+    except BlockingIOError as exc:
+        # Not a failure: a run that overlapped another has nothing to do
+        # and nothing to report.  A scheduler is told apart from a real
+        # error by the code, so a nightly job does not page anybody for
+        # having started while yesterday's was still going.
+        #
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+    except (OSError, TripsyError) as exc:
+        raise click.ClickException(f"export failed: {exc}") from exc
+
+    if verbose:
+        for trip in chosen:
+            click.echo(f"  {trip.get('name') or trip.get('id')}")
+
+    click.echo(
+        f"{plural(outcome.trips, 'trip')}, "
+        f"{plural(outcome.objects, 'object')}, "
+        f"{plural(outcome.documents, 'document')} into {outcome.path}"
+    )
+    if outcome.quarantined:
+        click.echo(
+            f"{plural(len(outcome.quarantined), 'payload')} quarantined",
+            err=True,
+        )
 
 
 if __name__ == "__main__":
