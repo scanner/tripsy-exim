@@ -23,3 +23,8 @@ described in [README.md](README.md).
   already positions elsewhere, refusing a code that names two places
   -- two airports serving one city, say, or a code like `TYO` that
   names a metropolitan area rather than an airport.
+
+### Fixed
+
+- [models(7)](docs/models.md) said the API documents no value set for
+  `activity_type`. It documents 47, and a person can add their own.
