@@ -20,10 +20,12 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn
 
-# 3rd party imports
 import factory.random
 import httpx
 import pytest
+
+# 3rd party imports
+from click.testing import CliRunner
 from faker import Faker
 from pytest_factoryboy import register
 from pytest_mock import MockerFixture
@@ -461,3 +463,17 @@ def guessed_timezone_trip(
     keys = archive.trip_keys()
     assert len(keys) == 1
     return keys[0]
+
+
+####################################################################
+#
+@pytest.fixture
+def runner() -> CliRunner:
+    """
+    A Click runner for the command group.
+
+    Lives here rather than beside the per-command tests because the
+    walkthrough of the importing guide drives the CLI too, and it is not
+    a test of any one command.
+    """
+    return CliRunner()

@@ -18,10 +18,10 @@ hand you.
 TripIt does not offer that export from the app. The way to get one is to
 email `support@tripit.com`, from the address you sign in to TripIt with,
 asking for a "GDPR Request - complete JSON export of my personal account
-data". Invoking GDPR is what gets it delivered within a defined time; the
-file itself is ordinary JSON and carries no GDPR-specific structure, which
-is why the rest of these documents simply call it the TripIt JSON
-export.
+data". The reply has arrived within a couple of days, with the file
+attached to it. That file is ordinary JSON and carries no GDPR-specific
+structure, which is why the rest of these documents simply call it the
+TripIt JSON export.
 
 The second half follows from the first. Being locked inside a service is
 what created the problem, so `tripsy-exim` also keeps a complete, current,
@@ -207,7 +207,14 @@ archive rather than sharing commands. Today one of them is written.
 ### Importing from another service
 
 This is what the project was built for, and for most people it happens
-once. The shape of it is three stages with the archive in the middle:
+once.
+
+> **To actually do it, follow
+> [Importing your TripIt trips into Tripsy](docs/importing.md).** That is
+> the step-by-step guide, with a worked example. What follows here is
+> the shape of it and why it is built this way.
+
+The shape is three stages with the archive in the middle:
 
 ```mermaid
 flowchart LR
@@ -284,6 +291,30 @@ anything in the Tripsy app afterwards, and people do. The goal is to make
 the *initial* state as good as it can be, because every correction is
 cheaper here than it is later -- in the archive it is a file you can
 rewrite, and in the app it is hand-editing one object at a time.
+
+#### One format, both directions
+
+The two directions keep separate archives, as above, but not separate
+schemas. One provider-neutral format is what a parser translates *into*
+and what an export from Tripsy is written *as*. That is why it is plain
+sorted JSON in durable storage rather than a scratch directory, and why
+[models(7)](docs/models.md) is a provider-neutral object model rather
+than a TripIt reader's output.
+
+The staging archive lands in one directory, named by `--archive`, or
+`$TRIPSY_EXIM_ARCHIVE`, or `~/.local/share/tripsy-exim/archive`.
+
+#### Stage 2, in practice
+
+[backfill(1)](docs/backfill.md) is what stage 2 is made of: it says what
+the parser was unsure of and what Tripsy would have no way to place,
+fills in what your own archive can answer, and hands you the rest as an
+editable file. The [importing guide](docs/importing.md) walks it.
+
+The override format underneath is documented in
+[archive(7)](docs/archive.md), and corrections are applied on the way
+out rather than written back to the staged files -- which is why
+re-staging never clobbers one.
 
 #### One format, both directions
 

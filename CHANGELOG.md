@@ -13,6 +13,8 @@ described in [README.md](README.md).
 
 ### Added
 
+- A step-by-step guide to moving a TripIt account into Tripsy, in
+  [docs/importing.md](docs/importing.md), with a worked example.
 - `backfill report` says what the staged trips still need a person for,
   with the places listed commonest first.
 - `backfill export` writes an editable work-list of what is open, and

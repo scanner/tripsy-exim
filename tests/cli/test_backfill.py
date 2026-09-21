@@ -185,7 +185,7 @@ class TestBackfillReport:
 
         check.is_in(NARITA_TRIP, output)
         check.is_not_in("Kyoto", output)
-        check.is_in("gaps across 1 trips", output)
+        check.is_in("gaps across 1 trip", output)
 
     ####################################################################
     #

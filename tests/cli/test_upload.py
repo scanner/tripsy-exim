@@ -95,7 +95,7 @@ class TestUploadCommand:
         check.equal(result.exit_code, 0, result.output)
         check.is_in(KYOTO_TRIP, result.output)
         check.is_not_in(OSAKA_TRIP, result.output)
-        check.is_in("1 trips", result.output)
+        check.is_in("1 trip", result.output)
 
     ####################################################################
     #
