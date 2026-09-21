@@ -18,6 +18,16 @@ import pytest_check as check
 
 # Project imports
 from tests import tripit_builder as b
+from tests.places import (
+    HND,
+    KIX,
+    NRT,
+    ONE_BAY,
+    SFO,
+    SFO_CENTROID,
+    SFO_RUNWAY,
+    YVR,
+)
 from tripsy_exim.store import Archive
 from tripsy_exim.sync import stage_export
 from tripsy_exim.sync.backfill import gaps
@@ -34,25 +44,6 @@ from tripsy_exim.sync.infer import (
 )
 from tripsy_exim.sync.worklist import apply_rows
 
-# Real positions, so a test can say which airport a coordinate is.
-#
-NARITA = (35.7720, 140.3929)
-VANCOUVER = (49.1947, -123.1792)
-OSAKA = (34.4353, 135.2440)
-
-# Far enough from Narita to be somewhere else entirely, for the case
-# where one code has been used for two places.
-#
-NOT_NARITA = (35.5494, 139.7798)
-
-# The three airports serving one bay, and the tightest real test of the
-# agreement guard: SFO to OAK is 17km, OAK to SJC 47km, SFO to SJC 49km.
-# Every pair of them would have passed a fifty-kilometre threshold.
-#
-SFO = (37.6213, -122.3790)
-OAK = (37.7126, -122.2197)
-SJC = (37.3639, -121.9289)
-
 
 ####################################################################
 #
@@ -65,7 +56,7 @@ def two_trips(archive: Archive) -> Callable[..., Archive]:
     case: the answer is already on disk, on another trip.
     """
 
-    def build(placed_at: tuple[float, float] = NARITA) -> Archive:
+    def build(placed_at: tuple[float, float] = NRT) -> Archive:
         stage_export(
             archive,
             b.export(
@@ -76,7 +67,7 @@ def two_trips(archive: Archive) -> Callable[..., Archive]:
                             frm="Narita",
                             to="Osaka",
                             frm_at=placed_at,
-                            to_at=OSAKA,
+                            to_at=KIX,
                         )
                     ],
                 ),
@@ -149,11 +140,9 @@ class TestSettle:
         The mode rather than the first, so a single odd record cannot
         move an airport.
         """
-        nearby = (35.7730, 140.3940)
+        position, agreed, refusal = settle([SFO, SFO_CENTROID, SFO, SFO])
 
-        position, agreed, refusal = settle([NARITA, nearby, NARITA, NARITA])
-
-        check.equal(position, NARITA)
+        check.equal(position, SFO)
         check.equal(agreed, 3)
         check.equal(refusal, "")
 
@@ -170,31 +159,11 @@ class TestSettle:
         protects against one odd record, not against a key that means
         two things.
         """
-        position, _, refusal = settle([NARITA, NARITA, VANCOUVER])
+        position, _, refusal = settle([NRT, NRT, YVR])
 
         check.is_none(position)
         check.is_in(SEGMENTS_DISAGREE, refusal)
         check.is_in("km apart", refusal, "and says how far")
-
-    ####################################################################
-    #
-    def test_a_large_airport_still_agrees_with_itself(self) -> None:
-        """
-        GIVEN: positions a few kilometres apart, as terminals are
-        WHEN:  the observations are settled
-        THEN:  they are treated as one place
-
-        Records of one airport differ by terminal and by rounding.  The
-        guard has to absorb that or it fires on every real corpus, which
-        is the whole reason it is not a hard-line comparison.
-        """
-        other_terminal = (35.7650, 140.3860)
-
-        position, agreed, refusal = settle([NARITA, other_terminal, NARITA])
-
-        check.equal(position, NARITA)
-        check.equal(agreed, 2)
-        check.equal(refusal, "", "a few kilometres is still one airport")
 
     ####################################################################
     #
@@ -209,7 +178,7 @@ class TestSettle:
         far enough to be a different airport and close enough that a
         careless threshold would wave it through.
         """
-        position, _, refusal = settle([NARITA, NOT_NARITA])
+        position, _, refusal = settle([NRT, HND])
 
         check.is_none(position)
         check.is_in(SEGMENTS_DISAGREE, refusal)
@@ -219,9 +188,9 @@ class TestSettle:
     @pytest.mark.parametrize(
         "pair,apart_km",
         [
-            ((SFO, OAK), 17),
-            ((OAK, SJC), 47),
-            ((SFO, SJC), 49),
+            ((ONE_BAY[0], ONE_BAY[1]), 17),
+            ((ONE_BAY[1], ONE_BAY[2]), 47),
+            ((ONE_BAY[0], ONE_BAY[2]), 49),
         ],
         ids=["SFO-OAK", "OAK-SJC", "SFO-SJC"],
     )
@@ -257,10 +226,7 @@ class TestSettle:
         runway differ by around a kilometre, and a guard that fired on
         that would refuse every airport in a real archive.
         """
-        centroid = (37.6188, -122.3750)
-        runway = (37.6152, -122.3899)
-
-        position, _, refusal = settle([SFO, centroid, runway])
+        position, _, refusal = settle([SFO, SFO_CENTROID, SFO_RUNWAY])
 
         check.is_not_none(position)
         check.equal(refusal, "")
@@ -292,10 +258,8 @@ class TestSettle:
         The default is chosen rather than measured, so it has to be
         movable by whoever has the data to know better.
         """
-        close_enough = (35.7800, 140.4000)
-
-        loose, _, _ = settle([NARITA, close_enough], DISAGREE_KM)
-        tight, _, refusal = settle([NARITA, close_enough], 0.1)
+        loose, _, _ = settle([SFO, SFO_CENTROID], DISAGREE_KM)
+        tight, _, refusal = settle([SFO, SFO_CENTROID], 0.1)
 
         check.is_not_none(loose, "agrees at the default")
         check.is_none(tight, "and not at a tighter one")
@@ -326,7 +290,7 @@ class TestInferences:
         known = positions_by_key(archive, archive.trip_keys())
 
         check.is_in("NAR", known)
-        check.equal(known["NAR"], [NARITA])
+        check.equal(known["NAR"], [NRT])
         check.is_not_in("VAN", known, "nothing placed it")
 
     ####################################################################
@@ -346,7 +310,7 @@ class TestInferences:
         answered = [i for i in found if i.answered]
         check.equal(len(answered), 1)
         check.equal(answered[0].key, "NAR")
-        check.equal(answered[0].position, NARITA)
+        check.equal(answered[0].position, NRT)
 
     ####################################################################
     #

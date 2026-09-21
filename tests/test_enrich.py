@@ -25,6 +25,13 @@ import pytest
 import pytest_check as check
 
 # Project imports
+from tests.places import (
+    KYOTO_STATION,
+    NRT,
+    TOKYO,
+    TOKYO_STATION,
+    YVR,
+)
 from tripsy_exim.models import Activity, Hosting, Transportation, Trip, mint
 from tripsy_exim.sources import ACTIVITY, HOSTING, TRANSPORTATION, EventNote
 from tripsy_exim.sources.ics import ParsedCalendar
@@ -34,17 +41,6 @@ from tripsy_exim.sync import DIVERGENCE_KM, enrich
 # The last three are the pairs the divergence threshold was drawn
 # between: an airport against the city a calendar names for it, and a
 # mismatch no distance explains.
-#
-# This module's own reference points, to the precision matching by
-# instant needs.  `test_geocode` names some of the same places to more
-# decimal places, for a comparison that turns on the difference.
-#
-TOKYO = (35.6812, 139.7671)
-KYOTO = (35.0116, 135.7681)
-NARITA = (35.7647, 140.3864)
-TOKYO_STATION = (35.6762, 139.6503)
-VANCOUVER = (49.1947, -123.1792)
-
 KIND_FOR = {
     Hosting: HOSTING,
     Activity: ACTIVITY,
@@ -248,7 +244,7 @@ class TestMatching:
         match can add a wrong value but can never destroy a right one.
         """
         target = trip_of(
-            placed(Activity(name="Museum", starts_at=at(10)), KYOTO)
+            placed(Activity(name="Museum", starts_at=at(10)), KYOTO_STATION)
         )
         source = trip_of(
             placed(Activity(name="Museum", starts_at=at(10)), TOKYO)
@@ -421,7 +417,7 @@ class TestWhereCoordinatesLand:
         source = trip_of(
             placed(
                 Transportation(name="Leg", departure_at=at(9)),
-                KYOTO,
+                KYOTO_STATION,
                 "arrival_",
             )
         )
@@ -444,7 +440,7 @@ class TestConflicts:
     @pytest.mark.parametrize(
         "checkout,conflicts,applied",
         [
-            pytest.param(KYOTO, 2, {}, id="disagreeing"),
+            pytest.param(KYOTO_STATION, 2, {}, id="disagreeing"),
             pytest.param(
                 TOKYO,
                 0,
@@ -514,7 +510,7 @@ class TestDivergence:
         every such pair in the reference corpus is of that kind.
         """
         target = trip_of(
-            placed(Activity(name="Arrival", starts_at=at(10)), NARITA)
+            placed(Activity(name="Arrival", starts_at=at(10)), NRT)
         )
         source = trip_of(
             placed(Activity(name="Arrival", starts_at=at(10)), TOKYO_STATION)
@@ -540,9 +536,7 @@ class TestDivergence:
         keeps its own value -- so the report is the whole point.
         """
         target = trip_of(placed(Activity(name="Leg", starts_at=at(10)), TOKYO))
-        source = trip_of(
-            placed(Activity(name="Leg", starts_at=at(10)), VANCOUVER)
-        )
+        source = trip_of(placed(Activity(name="Leg", starts_at=at(10)), YVR))
 
         result = enrich(target, source)
 

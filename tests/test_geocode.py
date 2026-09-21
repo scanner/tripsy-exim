@@ -23,6 +23,12 @@ import pytest_check as check
 from pytest_mock import MockerFixture
 
 # Project imports
+from tests.places import (
+    KYOTO_STATION,
+    KYOTO_STATION_IMPOSTOR,
+    NRT,
+    SFO_RUNWAY,
+)
 from tripsy_exim.geocode import (
     CACHE_ENV,
     MIN_DELAY_SECONDS,
@@ -37,16 +43,10 @@ from tripsy_exim.geocode import (
     plausible,
 )
 
-# Kyoto Station, and what a geocoder answers when asked for it without a
-# locality: a point in El Dorado County, California.
+# Whatever the stub hands back.  The value is arbitrary -- what the
+# test turns on is both lookups getting the same one.
 #
-# Full geocoder precision, because what is measured here is distance.
-# `test_enrich` names some of the same places more roundly.
-#
-KYOTO = (35.0116971, 135.7681616)
-IMPOSTOR = (38.69581586231335, -120.9094447761495)
-NARITA = (35.7719808, 140.3928501)
-SAN_FRANCISCO = (37.6152, -122.3899)
+CANNED_ANSWER = (34.0493, -118.2535)
 
 
 ########################################################################
@@ -239,11 +239,19 @@ class TestPlausible:
     @pytest.mark.parametrize(
         "position,references,believed",
         [
-            pytest.param(KYOTO, [NARITA], True, id="the-real-station"),
+            pytest.param(KYOTO_STATION, [NRT], True, id="the-real-station"),
             pytest.param(
-                IMPOSTOR, [NARITA], False, id="the-california-impostor"
+                KYOTO_STATION_IMPOSTOR,
+                [NRT],
+                False,
+                id="the-california-impostor",
             ),
-            pytest.param(IMPOSTOR, [], True, id="nothing-to-measure-against"),
+            pytest.param(
+                KYOTO_STATION_IMPOSTOR,
+                [],
+                True,
+                id="nothing-to-measure-against",
+            ),
             pytest.param(
                 (40.8324, -115.7631),
                 [(37.4852, -122.2364)],
@@ -251,8 +259,8 @@ class TestPlausible:
                 id="a-long-day-of-driving",
             ),
             pytest.param(
-                KYOTO,
-                [SAN_FRANCISCO, NARITA],
+                KYOTO_STATION,
+                [SFO_RUNWAY, NRT],
                 True,
                 id="near-the-far-end-of-a-flight",
             ),
@@ -381,7 +389,7 @@ class TestNormalised:
         booking happened to be.
         """
         clean = "300 South Example Street, Springfield, IL, 62704"
-        look, asked = counting({clean: (34.0493, -118.2535)})
+        look, asked = counting({clean: CANNED_ANSWER})
 
         found = placed(
             [clean, "300 South Example Street , Springfield , IL , 62704"],
@@ -391,9 +399,7 @@ class TestNormalised:
 
         check.equal(asked, [clean])
         check.equal(len(found), 2)
-        check.is_true(
-            all(f.position == (34.0493, -118.2535) for f in found.values())
-        )
+        check.is_true(all(f.position == CANNED_ANSWER for f in found.values()))
 
     ####################################################################
     #

@@ -30,6 +30,9 @@ from typing import Any
 # 3rd party imports
 from faker import Faker
 
+# Project imports
+from tests.places import KIX, SFO_RUNWAY
+
 # The bytes cp1252 leaves undefined, which the export carries as raw
 # latin-1.  Python's cp1252 codec raises on them, so encoding a
 # has to be done a byte at a time.
@@ -109,8 +112,8 @@ def flight(
     frm: str = "San Francisco",
     to: str = "Osaka",
     placed: bool = True,
-    frm_at: tuple[float, float] = (37.615215, -122.389881),
-    to_at: tuple[float, float] = (34.435330, 135.243977),
+    frm_at: tuple[float, float] = SFO_RUNWAY,
+    to_at: tuple[float, float] = KIX,
 ) -> dict[str, Any]:
     """
     A flight record, with one segment per leg.

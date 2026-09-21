@@ -21,6 +21,7 @@ from click.testing import CliRunner
 
 # Project imports
 from tests import tripit_builder as b
+from tests.places import HND, NRT
 from tripsy_exim.cli import main
 
 # The trip the unplaceable fixtures stage, named so a test reading the
@@ -485,18 +486,16 @@ class TestBackfillInfer:
         chosen rather than measured -- so the flag that moves it has to
         actually move it.
         """
-        narita = (35.7720, 140.3929)
-        haneda = (35.5494, 139.7798)
         archive_root = staged(
             b.trip(
                 name="Through Narita",
-                objects=[b.flight(frm="Narita", to="Osaka", frm_at=narita)],
+                objects=[b.flight(frm="Narita", to="Osaka", frm_at=NRT)],
             ),
             b.trip(
                 name="Through the other one",
                 start="2024-06-01",
                 end="2024-06-04",
-                objects=[b.flight(frm="Narita", to="Osaka", frm_at=haneda)],
+                objects=[b.flight(frm="Narita", to="Osaka", frm_at=HND)],
             ),
             b.trip(
                 name=NARITA_TRIP,
