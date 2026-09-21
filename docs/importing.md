@@ -118,8 +118,9 @@ if you want more than the one-line version.
 uv run tripsy-exim backfill export work.json
 ```
 
-Open `work.json` in any editor. Each row is one question, pre-filled with
-whatever the object holds now:
+Open `work.json` in whatever you like -- a text editor, or a tool built
+for JSON such as [fx](https://fx.wtf). Each row is one question,
+pre-filled with whatever the object holds now:
 
 ```json
 {
