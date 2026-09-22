@@ -213,8 +213,7 @@ def default_fetch(url: str) -> bytes:
     """
     response = httpx.get(url, follow_redirects=True, timeout=30.0)
     response.raise_for_status()
-    body: bytes = response.content
-    return body
+    return response.content
 
 
 ####################################################################

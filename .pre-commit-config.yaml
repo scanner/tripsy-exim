@@ -19,12 +19,24 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.20.0
+    # NOTE: Keep `rev` in step with the mypy in pyproject.toml, and the
+    # dependencies below in step with the project's own.  This hook runs
+    # in an environment of its own, and a package missing from the list
+    # is untyped inside it -- so the hook and `make lint` disagree, in
+    # both directions: it invents errors `Any` explains away, and misses
+    # the ones real types would have caught.
+    #
+    rev: v2.3.1
     hooks:
       - id: mypy
         additional_dependencies:
-          - pydantic
           - click
+          - geopy
+          - httpx
+          - icalendar
+          - pydantic
+          - python-dotenv
+          - timezonefinder
   - repo: local
     hooks:
       # Only synthetic fixtures are committed, and .gitignore re-allows
