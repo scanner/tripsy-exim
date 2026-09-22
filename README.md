@@ -118,7 +118,9 @@ supporting another service later a new adapter rather than a rewrite.
 
 Two version rules run through every route: writes go to v1, which is the
 only version that accepts them, and reads go to v2, which paginates at
-100 and is the only version that reports deletions.
+100 and is the only version that reports deletions. The exception is a
+trip's expenses and collaborators, which v2 does not serve and which are
+read from v1.
 
 Every call is paced -- see [Pacing](#pacing) below.
 

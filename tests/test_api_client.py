@@ -49,7 +49,7 @@ from tripsy_exim.api import (
     TransportError,
     TripsyClient,
 )
-from tripsy_exim.api.client import MIN_TRIP_IDENTIFIER_LENGTH
+from tripsy_exim.api.client import COLLECTIONS, MIN_TRIP_IDENTIFIER_LENGTH
 from tripsy_exim.api.retry import DEFAULT as DEFAULT_RETRIES
 
 # Long enough for trip-level duplicate suppression to engage.
@@ -619,6 +619,46 @@ class TestReads:
             children = list(client.iter_children(trip["id"], "activities"))
 
         assert len(children) == 12
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize("collection", sorted(COLLECTIONS))
+    def test_every_child_collection_is_read_where_it_is_served(
+        self,
+        collection: str,
+        paced_tripsy: FakeTripsy,
+        api_client: TripsyClient,
+    ) -> None:
+        """
+        GIVEN: a trip with one object in a child collection
+        WHEN:  that collection is iterated
+        THEN:  the object arrives, because the client asks the version
+               that serves it -- v2 has no expenses or collaborators and
+               v1 no documents, and the fake refuses each as Tripsy does
+        """
+        trip = paced_tripsy.seed_trip(name="Example")
+        child = paced_tripsy.seed_child(trip["id"], collection, name="One")
+
+        children = list(api_client.iter_children(trip["id"], collection))
+
+        assert [c["id"] for c in children] == [child["id"]]
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "asked", [{"deleted": True}, {"updated_since": "2026-01-01"}]
+    )
+    def test_a_v1_read_refuses_what_v1_cannot_answer(
+        self, asked: dict[str, Any], api_client: TripsyClient
+    ) -> None:
+        """
+        GIVEN: a collection only v1 serves
+        WHEN:  it is asked for tombstones or for changes since an instant
+        THEN:  the client refuses before sending, rather than handing back
+               a live list the caller would take for the answer
+        """
+        with pytest.raises(ValueError, match="read from v1"):
+            list(api_client.iter_children(1, "expenses", **asked))
 
     ####################################################################
     #

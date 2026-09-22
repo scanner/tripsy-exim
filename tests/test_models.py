@@ -384,6 +384,34 @@ class TestFieldTypes:
 
     ####################################################################
     #
+    @pytest.mark.parametrize(
+        "distance",
+        [
+            pytest.param(1234, id="whole"),
+            pytest.param(1234.5678, id="fractional"),
+        ],
+    )
+    def test_a_distance_comes_back_as_it_was_sent(
+        self, transportation_payload: dict[str, Any], distance: float
+    ) -> None:
+        """
+        GIVEN: a leg whose distance is a whole number or a fraction,
+               both of which Tripsy sends
+        WHEN:  it is validated and dumped
+        THEN:  it parses, and the number comes back in the form it
+               arrived in rather than being quarantined or recast
+        """
+        leg = Transportation.model_validate(
+            {**transportation_payload, "distance_meters": distance}
+        )
+
+        dumped = leg.model_dump(mode="json")["distance_meters"]
+
+        check.equal(dumped, distance)
+        check.is_instance(dumped, type(distance))
+
+    ####################################################################
+    #
     def test_owner_and_permissions_keep_their_own_shapes(
         self,
         trip_payload: dict[str, Any],

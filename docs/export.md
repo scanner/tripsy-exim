@@ -88,8 +88,11 @@ out.
   resolution order and the secret stores.
 
 `--verbose`
-: Name every trip written. Quiet by default, which is what a scheduled
-  run wants.
+: Say how many trips were selected, then name each one as it is
+  written, with its count of objects and documents. The summary then
+  says how the run was paced: requests sent, how many the service
+  throttled, how many failed, and the time spent waiting between them.
+  Quiet by default, which is what a scheduled run wants.
 
 ## EXAMPLES
 
@@ -141,7 +144,7 @@ after it.
 A run builds into a hidden directory beside the finished exports and
 moves it into place at the end. A dated directory therefore never names a
 half-written run. An interrupted one leaves only the hidden directory,
-which the next run of that instant rebuilds rather than writes into.
+and the next run removes it before it starts.
 
 A stamp names one run, so two runs started within the same second collide
 and the second is refused. In practice the lock makes that unreachable

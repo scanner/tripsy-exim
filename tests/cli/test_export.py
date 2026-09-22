@@ -276,7 +276,8 @@ class TestReporting:
         """
         GIVEN: a run of two trips
         WHEN:  it runs with and without --verbose
-        THEN:  both give the totals and only --verbose names the trips
+        THEN:  both give the totals, and only --verbose names the trips,
+               one numbered line each, and says how the run was paced
 
         A nightly job that listed every trip would mail its whole
         output every night, and a person reading that mail would stop
@@ -307,7 +308,11 @@ class TestReporting:
         check.equal(quiet.exit_code, 0, quiet.output)
         check.is_in("2 trips", quiet.output)
         check.is_not_in("Kyoto", quiet.output)
-        check.is_in("Kyoto", loud.output)
+        check.is_in("exporting 2 trips", loud.output)
+        check.is_in("/2] Kyoto, May 2011: 0 objects, 0 documents", loud.output)
+        check.is_in("paced as backup:", loud.output)
+        check.is_in("0 throttled, 0 failed", loud.output)
+        check.is_not_in("paced as", quiet.output)
 
 
 ########################################################################

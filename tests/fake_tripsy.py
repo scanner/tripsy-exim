@@ -746,6 +746,16 @@ _TRIP_DETAIL = re.compile(r"^/v1/trips/(\d+)$")
 #
 _SINGULAR_TO_PLURAL = {v: k for k, v in COLLECTIONS.items()}
 
+# List routes the real API does not serve for GET, and what it answers
+# instead: v2 has no expenses or collaborators, v1 no documents.  Both
+# answer with Django's HTML error page rather than JSON.
+#
+_UNSERVED_LISTS: dict[tuple[str, str], int] = {
+    ("v2", "expenses"): 404,
+    ("v2", "collaborators"): 404,
+    ("v1", "documents"): 405,
+}
+
 
 ####################################################################
 #
@@ -858,6 +868,13 @@ def _route(
         )
         if method == "POST":
             return _respond(*store.create_child(trip_id, collection, body))
+        refused = _UNSERVED_LISTS.get((version, collection))
+        if refused:
+            return httpx.Response(
+                refused,
+                text="<!doctype html><html></html>",
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
         return _respond(
             *store.list_children(trip_id, collection, params, version)
         )
