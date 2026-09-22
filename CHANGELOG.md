@@ -14,5 +14,5 @@ The first release. Import from a TripIt JSON export or `.ics` files into
 Tripsy, and export what Tripsy holds into dated local backups. See
 [README.md](README.md) for what the project does and how to use it.
 
-[Unreleased]: https://github.com/scanner/tripsy-exim/compare/1.0.0...HEAD
-[1.0.0]: https://github.com/scanner/tripsy-exim/releases/tag/1.0.0
+[Unreleased]: https://github.com/scanner/tripsy-exim/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/scanner/tripsy-exim/releases/tag/v1.0.0
