@@ -171,8 +171,8 @@ to a fortnight, and those arrays are the only thing that says so.
 
 A run builds into `.<stamp>.partial` beside the finished exports and moves
 it into place at the end. A stamp therefore never names a half-written
-run: an interrupted one leaves only the dotted directory, which the next
-run of that instant rebuilds rather than writes into.
+run: an interrupted one leaves only the dotted directory, and the next
+run removes it before it starts.
 
 Two runs of the same second would want the same name. The second is
 refused rather than merged -- merging would make one directory two

@@ -131,7 +131,10 @@ class Transportation(CanonicalModel):
     provider_url: str | None = None
     provider_reservation_code: str | None = None
     provider_reservation_description: str | None = None
-    distance_meters: int | None = None
+    # Tripsy sends both whole numbers and fractional ones.  The union
+    # keeps whichever arrived, so a round trip writes back what was read.
+    #
+    distance_meters: int | float | None = None
     price: Money | None = None
     currency: str | None = None
 

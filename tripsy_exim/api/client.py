@@ -10,9 +10,11 @@ what to do.
 
 Two version rules run through every route.  Writes go to v1, which is the
 only version that accepts them; reads go to v2, which paginates at 100 and
-is the only version that reports deletions.  The exception is
-`GET /v1/trips`, which answers a bare `results` list with no envelope and
-is the cheapest way to map identifiers to ids.
+is the only version that reports deletions.  There are two exceptions.
+`GET /v1/trips` answers a bare `results` list with no envelope and is the
+cheapest way to map identifiers to ids.  And v2 has no route for a trip's
+expenses or collaborators, so those two are read from v1 -- see
+`V1_READS`.
 
 Every call is paced.  The pacer lives under an `httpx.Client` as a
 transport, so retried sends and any route added later are paced too,
@@ -58,6 +60,13 @@ COLLECTIONS: dict[str, str] = {
     "collaborators": "collaborator",
     "documents": "document",
 }
+
+# Child collections v2 does not serve, read from v1 instead.  v1 answers
+# them in the same paginated envelope but reports no deletions, so they
+# cannot be asked for tombstones.  `documents` is the reverse case: v2
+# only, and v1 answers 405.  Verified against the live API on 2026-09-21.
+#
+V1_READS = frozenset({"expenses", "collaborators"})
 
 # Trip-level duplicate suppression only engages above this length --
 # verified against the live API on 2026-09-09.  Child objects suppress at
@@ -671,10 +680,14 @@ class TripsyClient:
         **filters: str | None,
     ) -> Iterator[dict[str, Any]]:
         """
-        GET a trip's child collection from v2, following the pages.
+        GET a trip's child collection, following the pages.
 
         A real trip carries over a hundred events, so this pages on the
         first import rather than hypothetically.
+
+        Read from v2, except for the collections in `V1_READS`, which v2
+        does not serve.  v1 reports no deletions, and whether it honours
+        `updatedSince` has not been verified, so neither is sent there.
 
         Args:
             trip_id: The trip to read from.
@@ -688,8 +701,18 @@ class TripsyClient:
 
         Yields:
             One object at a time, across every page.
+
+        Raises:
+            ValueError: `updated_since` or `deleted` was asked of a
+                collection read from v1.
         """
-        path = f"/v2/trip/{trip_id}/{_collection(collection)}"
+        version = "v1" if _collection(collection) in V1_READS else "v2"
+        if version == "v1" and (updated_since or deleted):
+            raise ValueError(
+                f"{collection} is read from v1, which reports no "
+                f"deletions and is not known to honour updatedSince"
+            )
+        path = f"/{version}/trip/{trip_id}/{collection}"
         yield from self.paginate(
             path,
             query(

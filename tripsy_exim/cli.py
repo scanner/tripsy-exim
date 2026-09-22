@@ -73,7 +73,9 @@ from tripsy_exim.sync.backfill import (
     gaps,
 )
 from tripsy_exim.sync.exporter import (
+    Progress,
     Selection,
+    TripWritten,
     default_fetch,
     export,
     only_one_run,
@@ -1486,6 +1488,36 @@ def backfill_infer_command(
 
 ####################################################################
 #
+def report_trip(total: int) -> Progress:
+    """
+    Build a progress report that names each trip as it is written.
+
+    Args:
+        total: How many trips the run was asked for.
+
+    Returns:
+        A callback for `export`, printing one line per trip.
+    """
+    done = 0
+
+    ####################################################################
+    #
+    def report(written: TripWritten) -> None:
+        """Print one line for the trip just written."""
+        nonlocal done
+        done += 1
+        name = written.payload.get("name") or written.payload.get("id")
+        click.echo(
+            f"  [{done}/{total}] {name}: "
+            f"{plural(written.objects, 'object')}, "
+            f"{plural(written.documents, 'document')}"
+        )
+
+    return report
+
+
+####################################################################
+#
 @main.command("export")
 @click.option(
     "--archive-root",
@@ -1537,7 +1569,7 @@ def backfill_infer_command(
     "--verbose",
     is_flag=True,
     default=False,
-    help="Name every trip written.  Quiet by default, for cron.",
+    help="Name each trip as it is written.  Quiet by default, for cron.",
 )
 def export_command(
     archive_root: Path | None,
@@ -1587,17 +1619,21 @@ def export_command(
     try:
         with only_one_run(destination):
             with open_session(username, password, profile=BACKUP) as client:
+                pacer = client.pacer
                 chosen = selection.select(client.iter_trips())
                 if not chosen:
                     raise click.ClickException(
                         "nothing matched; no export written"
                     )
+                if verbose:
+                    click.echo(f"exporting {plural(len(chosen), 'trip')}")
                 outcome = export(
                     client,
                     destination,
                     chosen,
                     scope=selection.scope,
                     fetch=default_fetch,
+                    progress=report_trip(len(chosen)) if verbose else None,
                 )
     except BlockingIOError as exc:
         # Not a failure: a run that overlapped another has nothing to do
@@ -1610,10 +1646,6 @@ def export_command(
     except (OSError, TripsyError) as exc:
         raise click.ClickException(f"export failed: {exc}") from exc
 
-    if verbose:
-        for trip in chosen:
-            click.echo(f"  {trip.get('name') or trip.get('id')}")
-
     click.echo(
         f"{plural(outcome.trips, 'trip')}, "
         f"{plural(outcome.objects, 'object')}, "
@@ -1623,6 +1655,13 @@ def export_command(
         click.echo(
             f"{plural(len(outcome.quarantined), 'payload')} quarantined",
             err=True,
+        )
+    if verbose:
+        click.echo(
+            f"paced as {pacer.profile.name}: "
+            f"{plural(pacer.requests, 'request')}, "
+            f"{pacer.throttles} throttled, {pacer.failures} failed, "
+            f"{pacer.total_wait:.1f}s spent waiting"
         )
 
 

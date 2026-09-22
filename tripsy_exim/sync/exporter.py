@@ -40,7 +40,7 @@ import errno
 import fcntl
 import re
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -113,6 +113,24 @@ class Fetch(Protocol):
     def __call__(self, url: str) -> bytes:
         """Read the whole body at this URL."""
         ...
+
+
+########################################################################
+########################################################################
+#
+@dataclass(frozen=True)
+class TripWritten:
+    """One trip, just written: what a progress report is told."""
+
+    payload: dict[str, Any]
+    directory: Path
+    objects: int
+    documents: int
+
+
+# Called once per trip as it is written.
+#
+Progress = Callable[[TripWritten], None]
 
 
 ########################################################################
@@ -465,6 +483,7 @@ def export(
     scope: dict[str, Any],
     when: datetime | None = None,
     fetch: Fetch | None = None,
+    progress: Progress | None = None,
 ) -> ExportOutcome:
     """
     Write one dated export.
@@ -475,6 +494,10 @@ def export(
     then fails rather than merging, and a lock is what keeps two runs
     from trying.
 
+    The caller holds `only_one_run` for the call.  A run starts by
+    removing whatever interrupted runs left behind, which is only safe
+    because no other run can be building.
+
     Args:
         client: An authenticated client.
         exports_root: The directory runs accumulate in.
@@ -484,6 +507,8 @@ def export(
         when: The instant to name the run after.  Defaults to now.
         fetch: How to read a document's bytes.  Defaults to an
             unauthenticated request.
+        progress: Told about each trip as soon as it is written, so a
+            long run can report as it goes.
 
     Returns:
         What the run wrote.
@@ -498,12 +523,13 @@ def export(
     if final.exists():
         raise FileExistsError(f"an export already exists at {final}")
 
-    # A directory left by an interrupted run is rebuilt rather than
-    # written into: what is in it was never finished, and merging onto
-    # it is how an export stops being one instant.
+    # Every directory left by an interrupted run is removed, whatever
+    # instant it was for: what is in one was never finished, and nothing
+    # else can be building while the caller holds the lock.
     #
-    if building.exists():
-        shutil.rmtree(building)
+    if exports_root.is_dir():
+        for leftover in exports_root.glob(PARTIAL.format(stamp="*")):
+            shutil.rmtree(leftover)
     building.mkdir(parents=True)
 
     outcome = ExportOutcome(path=final)
@@ -517,6 +543,7 @@ def export(
         directory = building / trip_directory(payload)
         directory.mkdir()
 
+        documents_before = outcome.documents
         document, objects = _trip_document(
             client, payload, directory, outcome, fetch or default_fetch
         )
@@ -524,6 +551,15 @@ def export(
 
         outcome.trips += 1
         outcome.objects += objects
+        if progress is not None:
+            progress(
+                TripWritten(
+                    payload=payload,
+                    directory=directory,
+                    objects=objects,
+                    documents=outcome.documents - documents_before,
+                )
+            )
         written.append(
             {
                 "id": payload.get("id"),

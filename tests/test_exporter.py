@@ -32,6 +32,7 @@ from tripsy_exim.api import TripsyClient
 from tripsy_exim.sync.exporter import (
     EXPORT_SCHEMA_VERSION,
     ExportOutcome,
+    TripWritten,
     document_filename,
     export,
     only_one_run,
@@ -450,6 +451,75 @@ class TestExportIsWholeOrNothing:
         path, _ = exported()
 
         check.is_false((path / "stale.json").exists())
+
+    ####################################################################
+    #
+    def test_what_earlier_interrupted_runs_left_is_cleared(
+        self,
+        seeded: Callable[..., dict[str, Any]],
+        exported: Callable[..., tuple[Path, ExportOutcome]],
+        tmp_path: Path,
+    ) -> None:
+        """
+        GIVEN: the leavings of a run interrupted at an earlier instant
+        WHEN:  a new run starts
+        THEN:  they are gone, since no later run would ever share their
+               stamp and nothing else ever removes them
+        """
+        seeded()
+        earlier = stamp_for(WHEN - timedelta(hours=1))
+        leftovers = tmp_path / "exports" / f".{earlier}.partial"
+        leftovers.mkdir(parents=True)
+
+        exported()
+
+        check.is_false(leftovers.exists())
+
+
+########################################################################
+########################################################################
+#
+class TestProgress:
+    """Tests that a run reports each trip as it goes."""
+
+    ####################################################################
+    #
+    def test_each_trip_is_reported_once_it_is_on_disk(
+        self,
+        seeded: Callable[..., dict[str, Any]],
+        paced_tripsy: FakeTripsy,
+        exported: Callable[..., tuple[Path, ExportOutcome]],
+    ) -> None:
+        """
+        GIVEN: two trips, one carrying a document
+        WHEN:  an export runs with a progress callback
+        THEN:  each trip is reported with its own counts, and its
+               trip.json already exists when it is -- a report at the
+               end would leave a long run silent until it was over
+        """
+        osaka = seeded()
+        seeded(
+            name="Kyoto, May 2011", starts_at="2011-05-01", ends_at="2011-05-08"
+        )
+        paced_tripsy.seed_child(osaka["id"], "documents", title="plan.pdf")
+        seen: list[tuple[str, int, int, bool]] = []
+
+        def note(written: TripWritten) -> None:
+            seen.append(
+                (
+                    written.payload["name"],
+                    written.objects,
+                    written.documents,
+                    (written.directory / "trip.json").exists(),
+                )
+            )
+
+        exported(progress=note)
+
+        assert sorted(seen) == [
+            ("Kyoto, May 2011", 2, 0, True),
+            ("Osaka, June 2012", 2, 1, True),
+        ]
 
 
 ########################################################################
