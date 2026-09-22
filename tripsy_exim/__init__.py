@@ -7,9 +7,14 @@ The canonical models in `tripsy_exim.models` are the hinge between every
 other layer: parsers in `sources` target them, `sync.importer` writes them
 to Tripsy through `api`, and `store` is where they live on disk.
 
-Reading a whole account back out of Tripsy is not written yet.  It will
-write a complete dated snapshot into a second archive rather than
-updating this one in place.
+`sync.exporter` reads a whole account back out of Tripsy into a dated
+export, a second kind of archive beside the staging ones.
 """
 
-__version__ = "0.1.0"
+# system imports
+from importlib.metadata import version
+
+# The version is set in pyproject.toml and read back from the installed
+# package's metadata.
+#
+__version__ = version("tripsy-exim")
