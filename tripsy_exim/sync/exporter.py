@@ -36,11 +36,15 @@ accumulation.
 """
 
 # system imports
+import errno
+import fcntl
 import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -86,6 +90,11 @@ MODELLED: dict[str, type[CanonicalModel]] = {
 
 DOCUMENTS = "documents"
 
+# Held for the length of a run, so a scheduled export and one started by
+# hand cannot write at the same moment.
+#
+LOCK = ".lock"
+
 # Runs of anything that has no place in a filename.  Titles come from
 # whoever uploaded the file, so they carry spaces, apostrophes and
 # whatever else a person typed.
@@ -125,6 +134,236 @@ class ExportOutcome:
     objects: int = 0
     documents: int = 0
     quarantined: list[str] = field(default_factory=list)
+
+
+########################################################################
+########################################################################
+#
+@dataclass(frozen=True)
+class Selection:
+    """
+    Which trips a run was asked for.
+
+    Name selectors union: naming two trips exports both, and a glob that
+    matches neither still lets a named one through.  The date range then
+    narrows whatever that came to, so `--glob 'Japan*' --from 2020-01-01`
+    reads as "the Japan trips, from 2020 on" rather than as two separate
+    requests.
+
+    Asking for nothing at all is refused.  A backup command whose bare
+    form silently meant "everything" would eventually be run by somebody
+    who meant something narrower.
+    """
+
+    everything: bool = False
+    trips: tuple[str, ...] = ()
+    glob: str | None = None
+    since: date | None = None
+    until: date | None = None
+
+    ####################################################################
+    #
+    def __post_init__(self) -> None:
+        """
+        Raises:
+            ValueError: Nothing was asked for, or `everything` was asked
+                for alongside a selector that narrows it by name.
+        """
+        named = bool(self.trips or self.glob)
+        dated = self.since is not None or self.until is not None
+
+        if not (self.everything or named or dated):
+            raise ValueError(
+                "nothing selected: name trips with --trip or --glob, "
+                "give a date range, or ask for --all"
+            )
+        if self.everything and named:
+            raise ValueError(
+                "--all covers every trip; it cannot be combined with "
+                "--trip or --glob"
+            )
+        if self.since and self.until and self.since > self.until:
+            raise ValueError(f"{self.since} is after {self.until}")
+
+    ####################################################################
+    #
+    @property
+    def scope(self) -> dict[str, Any]:
+        """
+        What to record in the manifest.
+
+        A partial export has to say it is one: a directory that cannot
+        tell a reader whether it means "everything Tripsy held" or
+        "these trips" is read wrongly by whoever restores from it.
+
+        Returns:
+            The selection, JSON-ready.
+        """
+        return {
+            "all": self.everything and not self.narrowed,
+            "trips": list(self.trips),
+            "glob": self.glob,
+            "from": self.since.isoformat() if self.since else None,
+            "to": self.until.isoformat() if self.until else None,
+        }
+
+    ####################################################################
+    #
+    @property
+    def narrowed(self) -> bool:
+        """Whether anything at all limits what this run covers."""
+        return bool(
+            self.trips
+            or self.glob
+            or self.since is not None
+            or self.until is not None
+        )
+
+    ####################################################################
+    #
+    def matches(self, trip: dict[str, Any]) -> bool:
+        """
+        Whether one trip is in this selection.
+
+        Args:
+            trip: The trip payload as the API sent it.
+
+        Returns:
+            Whether to export it.
+        """
+        if not self._named(trip):
+            return False
+        return self._dated(trip)
+
+    ####################################################################
+    #
+    def _named(self, trip: dict[str, Any]) -> bool:
+        """Whether a name selector lets this trip through."""
+        if self.everything or not (self.trips or self.glob):
+            return True
+
+        name = str(trip.get("name") or "")
+        folded = name.casefold()
+
+        for wanted in self.trips:
+            # A number is the Tripsy id, which is what a script has to
+            # hand; anything else is part of a name, which is what a
+            # person has.  Compared as text so an id never matches a
+            # name that merely contains the digits.
+            #
+            if wanted.isdigit():
+                if str(trip.get("id")) == wanted:
+                    return True
+            elif wanted.casefold() in folded:
+                return True
+
+        # `fnmatchcase` against folded text rather than `fnmatch`, whose
+        # case handling follows the filesystem -- the same pattern would
+        # otherwise mean different things on different machines.
+        #
+        return bool(self.glob) and fnmatchcase(
+            folded, str(self.glob).casefold()
+        )
+
+    ####################################################################
+    #
+    def _dated(self, trip: dict[str, Any]) -> bool:
+        """
+        Whether the date range lets this trip through.
+
+        A range asks when somebody travelled, so it matches on overlap:
+        a fortnight abroad is in "December" if any of it was.  A trip
+        with no dates has no answer to that question and is left out
+        rather than guessed at -- `--all` is how to take those too.
+        """
+        if self.since is None and self.until is None:
+            return True
+
+        starts, ends = _travel_dates(trip)
+        if starts is None or ends is None:
+            return False
+
+        if self.until is not None and starts > self.until:
+            return False
+        return not (self.since is not None and ends < self.since)
+
+    ####################################################################
+    #
+    def select(self, trips: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        The trips this selection covers.
+
+        Args:
+            trips: Every trip the account holds.
+
+        Returns:
+            Those to export, in the order they arrived.
+        """
+        return [trip for trip in trips if self.matches(trip)]
+
+
+####################################################################
+#
+def _travel_dates(trip: dict[str, Any]) -> tuple[date | None, date | None]:
+    """
+    When a trip happened, or nothing if it does not say.
+
+    `has_dates` is authoritative: a trip saying it has none is treated
+    as undated whatever the date fields hold.
+
+    Args:
+        trip: The trip payload as the API sent it.
+
+    Returns:
+        The first and last day, or two Nones.
+    """
+    if trip.get("has_dates") is False:
+        return None, None
+    try:
+        return (
+            date.fromisoformat(str(trip["starts_at"])),
+            date.fromisoformat(str(trip["ends_at"])),
+        )
+    except KeyError, TypeError, ValueError:
+        return None, None
+
+
+####################################################################
+#
+@contextmanager
+def only_one_run(exports_root: Path) -> Iterator[None]:
+    """
+    Hold the exports directory for the length of one run.
+
+    A scheduled export and one started by hand can land together, and
+    two runs writing at once would race for the same stamp.  The lock is
+    advisory and held on an open file descriptor, so it goes away with
+    the process however the process ends -- a stale lock file cannot
+    wedge the next run.
+
+    Args:
+        exports_root: The directory runs accumulate in.
+
+    Yields:
+        Nothing; the lock is held for the body.
+
+    Raises:
+        BlockingIOError: Another run holds it.
+    """
+    exports_root.mkdir(parents=True, exist_ok=True)
+    handle = (exports_root / LOCK).open("w")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                raise BlockingIOError(
+                    f"another export is running in {exports_root}"
+                ) from exc
+            raise
+        yield
+    finally:
+        handle.close()
 
 
 ####################################################################

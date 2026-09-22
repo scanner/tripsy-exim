@@ -298,4 +298,5 @@ re-run is a no-op, but it costs a full pass of requests.
 [models(7)](models.md), [stage(1)](stage.md),
 [stage-export(1)](stage-export.md), [list(1)](list.md),
 [merge(1)](merge.md), [upload(1)](upload.md), [verify(1)](verify.md),
-[fix-locations(1)](fix-locations.md)
+[fix-locations(1)](fix-locations.md),
+[export(1)](export.md)
