@@ -8,50 +8,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing has been released yet; what the project can currently do is
-described in [README.md](README.md).
+## [1.0.0] - 2026-09-21
 
-### Added
+The first release. Import from a TripIt JSON export or `.ics` files into
+Tripsy, and export what Tripsy holds into dated local backups. See
+[README.md](README.md) for what the project does and how to use it.
 
-- `export` takes a dated copy of what Tripsy holds: one directory per
-  run, one per trip inside it, each with the trip and its children in a
-  single document and whatever files are attached to it in the app.
-  Say what to take with `--all`, `--trip`, `--glob` and a `--from`/`--to`
-  window; asking for nothing is refused. Quiet by default for cron, with
-  exit 2 reserved for "another run is going" so a scheduler can tell that
-  apart from a failure. See [export(1)](docs/export.md).
-- Staging archives are named. `--archive NAME` picks which one a command
-  works on, defaulting to `staged`, so a scratch archive and a real
-  import can sit side by side.
-- A step-by-step guide to moving a TripIt account into Tripsy, in
-  [docs/importing.md](docs/importing.md), with a worked example.
-- `backfill report` says what the staged trips still need a person for,
-  with the places listed commonest first.
-- `backfill draft` writes an editable work-list of what is open, and
-  `backfill apply` reads it back as corrections.
-- `backfill infer` places an endpoint from an airport code the archive
-  already positions elsewhere, refusing a code that names two places
-  -- two airports serving one city, say, or a code like `TYO` that
-  names a metropolitan area rather than an airport.
-
-### Changed
-
-- `$TRIPSY_EXIM_ARCHIVE` and `--archive-root` name the directory holding
-  every archive, not one archive. A staging archive now lives at
-  `<root>/staged/<name>/` and exports will land under `<root>/exports/`.
-  **An existing archive has to be moved** into place before any command
-  will find it:
-
-  ```sh
-  ROOT="$TRIPSY_EXIM_ARCHIVE"          # or ~/.local/share/tripsy-exim
-  mv "$ROOT" "$ROOT.moving"
-  mkdir -p "$ROOT/staged"
-  mv "$ROOT.moving" "$ROOT/staged/staged"
-  ```
-- `--archive` takes an archive name rather than a directory. Passing a
-  path to it is an error; `--archive-root` is the flag that takes one.
-
-### Fixed
-
-- [models(7)](docs/models.md) said the API documents no value set for
-  `activity_type`. It documents 47, and a person can add their own.
+[Unreleased]: https://github.com/scanner/tripsy-exim/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/scanner/tripsy-exim/releases/tag/1.0.0
