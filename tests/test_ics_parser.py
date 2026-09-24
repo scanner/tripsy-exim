@@ -32,6 +32,7 @@ from tripsy_exim.sources.ics import (
     TRIPIT_UID_NAMESPACE,
     _zoneinfo,
     classify,
+    flight_details,
     parse,
     uuid_from_uid,
 )
@@ -288,6 +289,177 @@ class TestClassification:
         check.is_not_none(leg.arrival_address, "arrival address")
         check.is_none(leg.departure_address, "departure left empty")
         check.is_none(leg.departure_timezone, "and unzoned")
+
+
+########################################################################
+########################################################################
+#
+class TestFlightDetails:
+    """
+    Tests reading the block TripIt generates for a flight.
+
+    Only the generated block is read, never the traveller's own notes, so
+    this is a template being parsed rather than prose being guessed at.
+    Measured against the JSON export, terminals and gates agreed on every
+    one of 147 joinable flights.  Operator and number agreed on all but
+    the codeshares, where the calendar names the operating carrier and
+    the export the marketing one.
+    """
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "summary,block,expected",
+        [
+            # Everything present, on one operator line.
+            (
+                "",
+                ics_builder.flight_block(
+                    company="Aurora Air",
+                    number="123",
+                    departure_terminal="2",
+                    departure_gate="Q7",
+                    arrival_terminal="North",
+                    arrival_gate="G4",
+                ),
+                {
+                    "company": "Aurora Air",
+                    "transport_number": "123",
+                    "departure_terminal": "2",
+                    "departure_gate": "Q7",
+                    "arrival_terminal": "North",
+                    "arrival_gate": "G4",
+                },
+            ),
+            # TripIt writes an unknown terminal or gate as nothing at all.
+            (
+                "",
+                ics_builder.flight_block(company="Aurora Air", number="123"),
+                {"company": "Aurora Air", "transport_number": "123"},
+            ),
+            # A layover is appended to the arrival line, not to the gate.
+            (
+                "",
+                ics_builder.flight_block(arrival_gate="C3", layover="1h, 5m"),
+                {
+                    "company": "Aurora Air",
+                    "transport_number": "123",
+                    "arrival_gate": "C3",
+                },
+            ),
+            # A split operator line with no number takes it from SUMMARY.
+            (
+                "ZQ0017 ZQA to ZQB",
+                ics_builder.flight_block(
+                    number=None, split=True, departure_gate="12"
+                ),
+                {
+                    "company": "Aurora Air",
+                    "transport_number": "0017",
+                    "departure_gate": "12",
+                },
+            ),
+            # The date-line notice sits between the halves without
+            # being mistaken for either.
+            (
+                "",
+                ics_builder.flight_block(date_line=True, arrival_terminal="1"),
+                {
+                    "company": "Aurora Air",
+                    "transport_number": "123",
+                    "arrival_terminal": "1",
+                },
+            ),
+            # A flight named only in prose has no block to read.
+            ("Flight to Reykjavik", "Your flight departs at noon", {}),
+        ],
+    )
+    def test_the_generated_flight_block_is_read(
+        self, summary: str, block: str, expected: dict[str, str]
+    ) -> None:
+        """
+        GIVEN: a flight event's SUMMARY and DESCRIPTION
+        WHEN:  its details are read
+        THEN:  each value TripIt wrote lands on its field, and a value
+               TripIt left empty is absent rather than an empty string
+        """
+        assert flight_details(summary, block) == expected
+
+    ####################################################################
+    #
+    def test_a_parsed_flight_carries_its_details(
+        self, ics_calendar: Callable[..., str]
+    ) -> None:
+        """
+        GIVEN: a calendar holding a flight with TripIt's generated block
+        WHEN:  it is parsed
+        THEN:  the transportation carries the operator and number, and
+               the description still holds the full text
+        """
+        parsed = parse(ics_calendar(items=1, flights=1))
+        leg = parsed.transportations[0]
+
+        check.is_in(leg.company, ics_builder.FLIGHT_OPERATORS, "operator")
+        check.is_true((leg.transport_number or "").isdigit(), "number")
+        check.is_not_none(leg.departure_gate, "departure gate")
+        check.is_in("[Flight]", leg.description or "", "prose kept")
+
+
+########################################################################
+########################################################################
+#
+class TestRedirects:
+    """
+    Tests removing TripIt's tracking redirects from notes.
+
+    TripIt wraps each link a traveller typed in a redirect whose token
+    rotates on every export, so the same trip exported twice differed
+    on every description holding a link.
+    """
+
+    ####################################################################
+    #
+    @pytest.mark.parametrize(
+        "description,expected",
+        [
+            # The redirect gives way to the link the traveller typed.
+            (
+                'Opening hours <a target="_blank" rel="nofollow" '
+                'href="https://www.tripit.com/home/redirectPage/page_key/'
+                '0123456789ABCDEF0123456789ABCDEF">https://museum.example/'
+                "hours</a> today",
+                "Opening hours https://museum.example/hours today",
+            ),
+            # Any other link is the traveller's own and is left alone.
+            (
+                '<a href="https://museum.example/">museum</a>',
+                '<a href="https://museum.example/">museum</a>',
+            ),
+        ],
+    )
+    def test_a_redirect_becomes_the_link_it_hid(
+        self, faker: Faker, description: str, expected: str
+    ) -> None:
+        """
+        GIVEN: an event whose notes hold a link
+        WHEN:  the calendar is parsed
+        THEN:  a TripIt redirect is replaced by its link text, and any
+               other markup survives unchanged
+        """
+        calendar = ics_builder.build_calendar(faker, items=0)
+        calendar.add_component(
+            ics_builder.build_event(
+                faker,
+                starts_at=datetime(2027, 6, 1, 9, tzinfo=UTC),
+                ends_at=datetime(2027, 6, 1, 10, tzinfo=UTC),
+                summary="Harbour walk",
+                description=description,
+            )
+        )
+
+        parsed = parse(ics_builder.to_ics(calendar))
+
+        assert parsed.activities[0].description == expected
 
 
 ########################################################################

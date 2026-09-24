@@ -26,6 +26,14 @@ activity because nothing matched, the ones skipped outright, and the
 times whose zone had to be guessed. See REPORT in
 [archive(7)](archive.md).
 
+A calendar event's summary, notes and location are kept as its name,
+description and address. For a flight, the airline, flight number,
+terminals and gates are also read from the block TripIt writes into the
+notes. Seats, fare class, confirmation codes and room details are not
+in the calendar, so they stay empty. TripIt wraps each link in your
+notes in a tracking redirect that changes on every export; the
+redirect is replaced by the link you typed.
+
 `SOURCES` are `.ics` files; pass as many as you like. Directories are
 not expanded -- let the shell do it.
 

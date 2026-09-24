@@ -46,7 +46,7 @@ note: the report is meant to be read before an import runs, not after.
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
-from typing import Any
+from typing import Any, TypedDict, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # 3rd party imports
@@ -82,6 +82,39 @@ _UUID = re.compile(
 _LODGING = re.compile(r"check[\s-]?(in|out)", re.IGNORECASE)
 _FLIGHT = re.compile(r"\bflight\b", re.IGNORECASE)
 
+# TripIt wraps every link a traveller typed into their notes in a
+# tracking redirect, whose token rotates on every export.  The anchor's
+# text is the link as it was typed, so that is what replaces it.
+#
+_REDIRECT_ANCHOR = re.compile(
+    r"<a\b[^>]*\bhref=\"https?://(?:www\.)?tripit\.com/home/redirectPage/"
+    r"[^\"]*\"[^>]*>(.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# The block TripIt generates for a flight, as opposed to anything a
+# traveller wrote:
+#
+#   [Flight] <from> to <to>
+#   <airline> <number>, Terminal <t>, Gate <g>
+#   ...
+#   Arrive <city> (<to>)
+#   Terminal <t>, Gate <g>[, <layover>]
+#
+# The operator line is sometimes split, with the number absent and the
+# terminal and gate on a line of their own.  Empty values are written as
+# nothing at all -- `Terminal , Gate ` -- rather than omitted.
+#
+_FLIGHT_HEADER = re.compile(r"^\[Flight\] .*$", re.MULTILINE)
+_FLIGHT_ARRIVAL = re.compile(r"^Arrive .*\(\w+\)\s*$", re.MULTILINE)
+_TERMINAL_GATE = re.compile(r"Terminal ([^,\n]*), Gate ([^,\n]*)")
+_OPERATOR = re.compile(r"^(?P<company>.*?\D)(?:\s+(?P<number>\d+))?$")
+
+# A flight SUMMARY leads with the IATA carrier code and the number run
+# together.  Read only when the operator line carries no number.
+#
+_SUMMARY_FLIGHT_NUMBER = re.compile(r"^[A-Z0-9]{2}(\d+)\b")
+
 # Properties this parser consumes.  Anything else on a VEVENT is retained
 # verbatim rather than dropped, because a field we did not think to read
 # is exactly what a later importer may need.
@@ -105,6 +138,20 @@ TRANSPORTATION = "transportation"
 # imported at all.
 #
 SKIPPED = "skipped"
+
+
+########################################################################
+########################################################################
+#
+class FlightDetails(TypedDict, total=False):
+    """The Transportation fields a flight's generated block can fill."""
+
+    company: str
+    transport_number: str
+    departure_terminal: str
+    departure_gate: str
+    arrival_terminal: str
+    arrival_gate: str
 
 
 ########################################################################
@@ -255,6 +302,83 @@ def _text(event: Component, name: str) -> str:
 
 ####################################################################
 #
+def strip_redirects(text: str) -> str:
+    """
+    Replace TripIt's tracking redirect anchors with the links they hide.
+
+    Other markup is left as it is: only the redirect carries a token that
+    changes between exports of the same trip.
+
+    Args:
+        text: DESCRIPTION prose.
+
+    Returns:
+        The text with each redirect anchor reduced to its link text.
+    """
+    return _REDIRECT_ANCHOR.sub(r"\1", text)
+
+
+####################################################################
+#
+def flight_details(summary: str, description: str) -> FlightDetails:
+    """
+    Read the operator, number, terminals and gates out of a flight event.
+
+    Only TripIt's own generated block is read, never a traveller's notes.
+    A description without the block yields nothing.
+
+    Args:
+        summary: The SUMMARY property, consulted for the flight number
+            when the operator line does not carry one.
+        description: The DESCRIPTION property.
+
+    Returns:
+        Transportation field names mapped to the values found.  A field
+        TripIt left empty is absent rather than an empty string.
+    """
+    header = _FLIGHT_HEADER.search(description)
+    if header is None:
+        return FlightDetails()
+
+    body = description[header.end() :]
+    arrival = _FLIGHT_ARRIVAL.search(body)
+    departing = body[: arrival.start()] if arrival else body
+    arriving = body[arrival.end() :] if arrival else ""
+
+    found: dict[str, str | None] = {}
+
+    lines = [line.strip() for line in departing.splitlines() if line.strip()]
+    if lines:
+        operator = lines[0].partition(", Terminal ")[0].strip()
+        if not operator.startswith("Terminal "):
+            parts = _OPERATOR.match(operator)
+            if parts is not None:
+                found["company"] = parts["company"]
+                found["transport_number"] = parts["number"]
+
+    if not found.get("transport_number"):
+        number = _SUMMARY_FLIGHT_NUMBER.match(summary.strip())
+        if number is not None:
+            found["transport_number"] = number.group(1)
+
+    for end, section in (("departure", departing), ("arrival", arriving)):
+        where = _TERMINAL_GATE.search(section)
+        if where is not None:
+            found[f"{end}_terminal"] = where.group(1)
+            found[f"{end}_gate"] = where.group(2)
+
+    return cast(
+        FlightDetails,
+        {
+            name: value.strip()
+            for name, value in found.items()
+            if value is not None and value.strip()
+        },
+    )
+
+
+####################################################################
+#
 def _coordinates(event: Component) -> tuple[float, float] | None:
     """The GEO property as (latitude, longitude), if it carries one."""
     geo = event.get("GEO")
@@ -369,7 +493,7 @@ def _common(
     fields: dict[str, Any] = {
         "internal_identifier": identifier,
         "name": _text(event, "SUMMARY") or None,
-        "description": _text(event, "DESCRIPTION") or None,
+        "description": strip_redirects(_text(event, "DESCRIPTION")) or None,
         "address": _text(event, "LOCATION") or None,
         "timezone": zone,
     }
@@ -438,7 +562,14 @@ def _build(
         # calendar does not say where a leg begins.  The instants are
         # unaffected, being written in UTC.
         #
+        # The operator, number, terminals and gates come from the block
+        # TripIt generates in DESCRIPTION.  The full text is kept as the
+        # description as well.
+        #
         built = Transportation(
+            **flight_details(
+                _text(event, "SUMMARY"), _text(event, "DESCRIPTION")
+            ),
             internal_identifier=identifier,
             name=common["name"],
             description=common["description"],
