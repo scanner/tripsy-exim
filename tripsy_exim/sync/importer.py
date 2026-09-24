@@ -1100,7 +1100,14 @@ def verify_trip(
     plan = plan_trip(archive, trip_key)
     check = TripCheck(trip_key=trip_key, name=plan.name, planned=plan.total)
 
-    trip_id = client.trip_ids_by_identifier().get(plan.identifier)
+    # The id an upload recorded comes first, while that trip still exists:
+    # a trip saved again in the app can come back carrying a different
+    # internal_identifier, while its id stays put.
+    #
+    live = client.trip_ids_by_identifier()
+    trip_id = _recall(archive, plan.identifier)
+    if trip_id not in live.values():
+        trip_id = live.get(plan.identifier)
     if trip_id is None:
         check.missing = [obj.identifier for obj in plan.objects]
         return check
@@ -1108,17 +1115,21 @@ def verify_trip(
 
     wanted = {obj.identifier: obj for obj in plan.objects}
     seen: set[str] = set()
-    for collection in COLLECTION_ORDER:
-        for found in client.iter_children(trip_id, collection):
-            identifier = str(found.get("internal_identifier") or "")
-            if not identifier or identifier not in wanted:
-                check.extra.append(identifier or f"<unnamed {collection}>")
-                continue
+    children = [
+        (collection, found)
+        for collection in COLLECTION_ORDER
+        for found in client.iter_children(trip_id, collection)
+    ]
+    for collection, found in children:
+        identifier = str(found.get("internal_identifier") or "")
+        if not identifier or identifier not in wanted:
+            check.extra.append(identifier or f"<unnamed {collection}>")
+            continue
 
-            seen.add(identifier)
-            check.matched += 1
-            planned = wanted[identifier]
-            _compare(check, planned, found, collection)
+        seen.add(identifier)
+        check.matched += 1
+        planned = wanted[identifier]
+        _compare(check, planned, found, collection)
 
     check.missing = sorted(set(wanted) - seen)
     return check

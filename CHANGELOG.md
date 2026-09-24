@@ -23,6 +23,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Report each login, and whether the token was saved, on standard error.
 
+### Fixed
+
+- `verify` no longer reports a trip as wholly missing after it has been
+  saved again in the Tripsy app.
+
 ## [1.0.1] - 2026-09-24
 
 ### Added
