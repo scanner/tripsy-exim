@@ -168,10 +168,10 @@ TRIPSY_USERNAME=you@example.com
 TRIPSY_PASSWORD=...
 ```
 
-`--username` and `--password` work too, and if you keep secrets in
-1Password there is `TRIPSY_SECRET_URL` -- see
-[CREDENTIALS in the README](../README.md#credentials) for the full
-resolution order and what is stored where.
+`--username` and `--password` work too, you are asked at a terminal
+when neither is given, and `TRIPSY_SECRET_URL` names a 1Password or
+HashiCorp Vault store to keep the token in -- see
+[CREDENTIALS in the README](../README.md#credentials) for the rules.
 
 ## 7. Upload, a trip at a time
 

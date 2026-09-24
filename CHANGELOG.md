@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-24
+
+### Added
+
+- Support HashiCorp Vault as a secret store, with `hcvault://` URLs.
+- Ask for the Tripsy username and password at a terminal when no flag,
+  environment variable or store supplies them.
+
+### Changed
+
+- Report each login, and whether the token was saved, on standard error.
+
 ## [1.0.1] - 2026-09-24
 
 ### Added
@@ -26,6 +38,7 @@ The first release. Import from a TripIt JSON export or `.ics` files into
 Tripsy, and export what Tripsy holds into dated local backups. See
 [README.md](README.md) for what the project does and how to use it.
 
-[Unreleased]: https://github.com/scanner/tripsy-exim/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/scanner/tripsy-exim/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/scanner/tripsy-exim/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/scanner/tripsy-exim/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/scanner/tripsy-exim/releases/tag/v1.0.0
