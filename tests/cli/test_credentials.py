@@ -20,12 +20,13 @@ from typing import Any
 import click
 import pytest
 import pytest_check as check
+from click.testing import CliRunner
 from pytest_mock import MockerFixture
 
 # Project imports
 from tripsy_exim.api import TripsyClient
-from tripsy_exim.api.errors import BadRequest
-from tripsy_exim.cli import open_session, resolve_credentials
+from tripsy_exim.api.errors import AuthenticationError, BadRequest
+from tripsy_exim.cli import main, open_session, resolve_credentials
 from tripsy_exim.secrets import PASSWORD, TOKEN, USERNAME, SecretError
 
 
@@ -161,21 +162,42 @@ class TestUsernameAndPassword:
 
     ####################################################################
     #
+    @pytest.mark.parametrize(
+        "store,expected,asked",
+        [
+            pytest.param(
+                MemoryStore(username="u"),
+                ("u", "typed-password"),
+                1,
+                id="store-has-username",
+            ),
+            pytest.param(
+                None,
+                ("typed-username", "typed-password"),
+                2,
+                id="no-store-at-all",
+            ),
+        ],
+    )
     def test_4_a_terminal_is_asked_only_for_what_is_missing(
-        self, prompting: Any
+        self,
+        prompting: Any,
+        store: MemoryStore | None,
+        expected: tuple[str, str],
+        asked: int,
     ) -> None:
         """
-        GIVEN: a store holding the username but not the password, at a
-               terminal
+        GIVEN: a store holding only the username, or no store at all, at
+               a terminal
         WHEN:  the credentials are resolved
-        THEN:  only the password is asked for, with the input hidden
+        THEN:  only what is missing is asked for, the password hidden
         """
-        found = resolve_credentials(None, None, MemoryStore(username="u"))
+        found = resolve_credentials(None, None, store)
 
-        check.equal(found, ("u", "typed-password"))
-        check.equal(prompting.call_count, 1, "asked once")
+        check.equal(found, expected)
+        check.equal(prompting.call_count, asked, "asked for what is missing")
         check.is_true(
-            prompting.call_args.kwargs.get("hide_input"), "input hidden"
+            prompting.call_args.kwargs.get("hide_input"), "password hidden"
         )
 
     ####################################################################
@@ -329,3 +351,101 @@ class TestToken:
                 pass
 
         check.equal(store.fields, {}, "nothing saved")
+
+
+########################################################################
+########################################################################
+#
+class TestAuthCheck:
+    """
+    Tests for `auth check`, which authenticates the way every command
+    does and says how.
+    """
+
+    ####################################################################
+    #
+    @pytest.fixture
+    def account(self, mocker: MockerFixture) -> Any:
+        """
+        The request `auth check` makes, answering with one trip id.
+
+        Returns the mock, so a test can make Tripsy refuse it instead.
+        """
+        return mocker.patch.object(
+            TripsyClient,
+            "iter_trips",
+            autospec=True,
+            side_effect=lambda *a, **k: iter([{"id": 1}]),
+        )
+
+    ####################################################################
+    #
+    def test_a_stored_token_is_named(
+        self,
+        runner: CliRunner,
+        store: MemoryStore,
+        account: Any,
+        tripsy_login: Any,
+    ) -> None:
+        """
+        GIVEN: a store holding a token
+        WHEN:  auth check is run
+        THEN:  it says which store the token came from, that Tripsy
+               accepted it, and exits 0 without logging in
+        """
+        store.fields[TOKEN] = "stored-token"
+
+        result = runner.invoke(main, ["auth", "check"])
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_in("using the token stored in memory://tripsy", result.output)
+        check.is_in("Tripsy accepted the token", result.output)
+        check.equal(tripsy_login.call_count, 0, "never logged in")
+
+    ####################################################################
+    #
+    def test_without_a_token_it_logs_in_and_saves_one(
+        self,
+        runner: CliRunner,
+        store: MemoryStore,
+        account: Any,
+        tripsy_login: Any,
+        environment: MutableMapping[str, str],
+    ) -> None:
+        """
+        GIVEN: an empty store and credentials in the environment
+        WHEN:  auth check is run
+        THEN:  it logs in, saves the token, says so, and exits 0
+        """
+        environment["TRIPSY_USERNAME"] = "u"
+        environment["TRIPSY_PASSWORD"] = "p"
+
+        result = runner.invoke(main, ["auth", "check"])
+
+        check.equal(result.exit_code, 0, result.output)
+        check.is_in("token saved to memory://tripsy", result.output)
+        check.equal(store.fields[TOKEN], "new-token-1")
+
+    ####################################################################
+    #
+    def test_a_refusal_exits_1(
+        self,
+        runner: CliRunner,
+        store: MemoryStore,
+        account: Any,
+        mocker: MockerFixture,
+    ) -> None:
+        """
+        GIVEN: a stored token Tripsy refuses, and no way to log in again
+        WHEN:  auth check is run
+        THEN:  it exits 1 with an error, never claiming success
+        """
+        store.fields[TOKEN] = "spent-token"
+        account.side_effect = AuthenticationError(
+            "refused", status_code=401, method="GET", url="/v2/trips"
+        )
+
+        result = runner.invoke(main, ["auth", "check"])
+
+        check.equal(result.exit_code, 1, result.output)
+        check.is_not_in("accepted", result.output)

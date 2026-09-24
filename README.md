@@ -399,7 +399,8 @@ REST Framework tokens, which are not documented to expire -- so the only
 way to learn one is spent is to be refused.
 
 Commands that only read or write the archive -- `stage`, `stage-export`,
-`list`, `merge`, and `upload` without `--write` -- need no credentials.
+`list` (but not `list --uploaded`), `merge`, and `upload` without
+`--write` -- need no credentials.
 
 A password is never written anywhere by this project. The token is
 written only to a secret store you name with `TRIPSY_SECRET_URL`.
@@ -426,7 +427,8 @@ separately, from the first place that has it:
 If one is still missing, the command stops and says where it looked.
 
 Every login is reported on standard error, with whether and where the
-token was saved.
+token was saved. `tripsy-exim auth check` runs these rules on their own
+and says which one it used -- see [auth(1)](docs/auth.md).
 
 A stored token is used before anything else is looked at, so while it is
 good, `--username` has no effect. To log in as someone else, remove the
@@ -563,13 +565,14 @@ all share. Start with [docs/README.md](docs/README.md).
 |-------------------------------------------|-----------------------------------------------------------|
 | [stage(1)](docs/stage.md)                 | Parse `.ics` files into the archive                       |
 | [stage-export(1)](docs/stage-export.md)   | Parse a TripIt JSON export into the archive               |
-| [list(1)](docs/list.md)                   | List the staged trips and what has been uploaded          |
+| [list(1)](docs/list.md)                   | List the staged trips, or the trips in Tripsy             |
 | [merge(1)](docs/merge.md)                 | Upload one staged trip as part of another                 |
 | [upload(1)](docs/upload.md)               | Send staged trips to Tripsy                               |
 | [verify(1)](docs/verify.md)               | Read them back and compare against the plan               |
 | [fix-locations(1)](docs/fix-locations.md) | Geocode what Tripsy left without a position               |
 | [backfill(1)](docs/backfill.md)           | Say what the staged trips still need a person for         |
 | [export(1)](docs/export.md)               | Take a dated copy of what Tripsy holds                    |
+| [auth(1)](docs/auth.md)                   | Check how this machine authenticates to Tripsy            |
 | [models(7)](docs/models.md)               | The pydantic object model, and how it maps to Tripsy's    |
 | [fake-api(7)](docs/fake-api.md)           | The in-memory Tripsy API the tests run against            |
 | [archive(7)](docs/archive.md)             | The archive on disk, identifiers, overrides, the manifest |

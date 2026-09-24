@@ -1,9 +1,10 @@
-# list(1) -- list the trips staged in the archive
+# list(1) -- list staged trips, or the trips in Tripsy
 
 ## SYNOPSIS
 
 ```text
-tripsy-exim list [--archive NAME] [--pending | --all]
+tripsy-exim list [--archive NAME] [--all | --pending | --uploaded]
+                 [--username TEXT] [--password TEXT]
 ```
 
 ## RUNNING
@@ -14,9 +15,12 @@ when you can drop the `uv run`.
 
 ## DESCRIPTION
 
-Prints the staged trips oldest first, one per line, with the trip key
-that every other command uses to name a trip. Nothing is sent to Tripsy,
-and no credentials are needed.
+Prints trips oldest first, one per line. `--all` and `--pending` read
+the staged archive; `--uploaded` asks Tripsy.
+
+With `--all` or `--pending`, each staged trip is shown with the trip key
+every other command uses to name it. Nothing is sent to Tripsy, and no
+credentials are needed.
 
 ```text
   up  2012-10-03  A trip an earlier run finished uploading      txim-...
@@ -47,11 +51,27 @@ a preview of what `upload --limit N` will take next.
 : Where the staging archives and the exports live. Defaults to
   `$TRIPSY_EXIM_ARCHIVE`, then `~/.local/share/tripsy-exim`.
 
-`--pending`
-: List only trips no run has finished uploading.
-
 `--all`
 : List every staged trip. The default.
+
+`--pending`
+: List only staged trips no run has finished uploading.
+
+`--uploaded`
+: List the trips in your Tripsy account instead, read from Tripsy. Needs
+  credentials -- see [auth(1)](auth.md) -- and no archive. When the
+  staged archive exists, a trip that came from it is shown with its key,
+  and the summary counts them:
+
+  ```text
+        2024-05-10  Osaka, Japan, May 2024                  txim-...
+        2030-01-01  A trip made in the app
+
+  2 trips in Tripsy, 1 from this archive
+  ```
+
+`--username TEXT`, `--password TEXT`
+: Credentials for `--uploaded`, if a login is needed.
 
 ## EXAMPLES
 
@@ -61,6 +81,13 @@ What the next upload would take:
 uv run tripsy-exim list --pending | head -10
 ```
 
+Everything in your Tripsy account, with no archive at all:
+
+```sh
+uv run tripsy-exim list --uploaded
+```
+
 ## SEE ALSO
 
-[upload(1)](upload.md), [merge(1)](merge.md), [archive(7)](archive.md)
+[upload(1)](upload.md), [merge(1)](merge.md), [auth(1)](auth.md),
+[archive(7)](archive.md)

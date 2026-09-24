@@ -1212,6 +1212,59 @@ class TestVerify:
         )
         check.is_true(checked.agrees, "an addition is not a disagreement")
 
+    ####################################################################
+    #
+    def test_a_trip_whose_identifier_changed_is_found_by_its_id(
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
+    ) -> None:
+        """
+        GIVEN: an uploaded trip that Tripsy now returns with a different
+               internal_identifier, as a trip saved again in the app does
+        WHEN:  it is read back and compared
+        THEN:  it is found through the id its upload recorded, and agrees
+
+        Found by identifier it would read as wholly missing, which is
+        what happened to three real trips.
+        """
+        assert uploaded.trip_id is not None
+        api_client.update_trip(
+            uploaded.trip_id, {"internal_identifier": "ReassignedInTheApp01"}
+        )
+
+        checked = verify_trip(api_client, staged, staged_key)
+
+        check.equal(checked.trip_id, uploaded.trip_id)
+        check.equal(checked.missing, [])
+        check.is_true(checked.agrees)
+
+    ####################################################################
+    #
+    def test_a_recorded_trip_deleted_in_the_app_reads_as_missing(
+        self,
+        staged: Archive,
+        staged_key: str,
+        api_client: TripsyClient,
+        uploaded: TripImport,
+    ) -> None:
+        """
+        GIVEN: an uploaded trip, recorded by id, then deleted in the app
+        WHEN:  it is read back and compared
+        THEN:  every planned object is reported missing, not an error
+        """
+        assert uploaded.trip_id is not None
+        plan = plan_trip(staged, staged_key)
+        api_client.delete_trip(uploaded.trip_id)
+
+        checked = verify_trip(api_client, staged, staged_key)
+
+        check.is_none(checked.trip_id)
+        check.equal(len(checked.missing), plan.total)
+        check.is_false(checked.agrees)
+
 
 ########################################################################
 ########################################################################

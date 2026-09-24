@@ -93,6 +93,7 @@ from tripsy_exim.sync.importer import (
     positions_in,
     resolve_trip_key,
     staged_trip,
+    trip_keys_by_id,
     undo_merge,
     unplaced_in,
     upload_trip,
@@ -204,6 +205,7 @@ def open_session(
     username: str | None,
     password: str | None,
     profile: PacingProfile = IMPORT,
+    say_where: bool = False,
 ) -> Iterator[TripsyClient]:
     """
     Yield a client authenticated with a Tripsy API token.
@@ -221,6 +223,8 @@ def open_session(
         username: Username given on the command line, or None.
         password: Password given on the command line, or None.
         profile: Pacing profile for the run.
+        say_where: Also report on standard error when a stored token is
+            used.  A login is always reported.
 
     Yields:
         A client carrying a token.
@@ -275,6 +279,8 @@ def open_session(
             stored = store.get(TOKEN)
         except SecretError as exc:
             raise click.ClickException(str(exc)) from exc
+    if stored and say_where and store is not None:
+        click.echo(f"using the token stored in {store.url}", err=True)
 
     client = TripsyClient(
         profile=profile,
@@ -581,22 +587,80 @@ def stage_export_command(
 
 ####################################################################
 #
+@main.group("auth")
+def auth_group() -> None:
+    """Check how this machine authenticates to Tripsy."""
+
+
+####################################################################
+#
+@auth_group.command("check")
+@click.option("--username", default=None, help="Tripsy account username.")
+@click.option("--password", default=None, help="Tripsy account password.")
+def auth_check_command(username: str | None, password: str | None) -> None:
+    """
+    Authenticate to Tripsy the way every command does, and say how.
+
+    Makes one small request -- the first page of trip ids -- so a token
+    Tripsy refuses is found and replaced here rather than partway
+    through a longer run.  Exits 0 when Tripsy accepts the token and 1
+    otherwise.
+    """
+    with open_session(
+        username, password, profile=INTERACTIVE, say_where=True
+    ) as client:
+        try:
+            next(client.iter_trips(fields=["id"]), None)
+        except TripsyError as exc:
+            raise click.ClickException(
+                f"Tripsy did not accept the request: {exc}"
+            ) from exc
+    click.echo("Tripsy accepted the token")
+
+
+####################################################################
+#
 @main.command("list")
 @archive_options("Staging archive the trips are read from.")
 @click.option(
-    "--pending/--all",
-    default=False,
-    help="List only trips no run has finished uploading.",
+    "--all",
+    "show",
+    flag_value="all",
+    default=True,
+    help="List every staged trip.  The default.",
 )
+@click.option(
+    "--pending",
+    "show",
+    flag_value="pending",
+    help="List only staged trips no run has finished uploading.",
+)
+@click.option(
+    "--uploaded",
+    "show",
+    flag_value="uploaded",
+    help="List the trips in your Tripsy account.  Needs credentials; "
+    "the archive is optional.",
+)
+@click.option("--username", default=None, help="Tripsy account username.")
+@click.option("--password", default=None, help="Tripsy account password.")
 def list_command(
-    archive_name: str, archive_root: Path | None, pending: bool
+    archive_name: str,
+    archive_root: Path | None,
+    show: str,
+    username: str | None,
+    password: str | None,
 ) -> None:
     """
-    List the trips staged in the archive, oldest first.
+    List trips, oldest first.
 
-    The mark in the first column says whether a run has finished
-    uploading that trip.
+    `--all` and `--pending` read the staged archive.  `--uploaded` asks
+    Tripsy, and marks each trip that came from the archive with its key.
     """
+    if show == "uploaded":
+        list_uploaded(archive_name, archive_root, username, password)
+        return
+
     archive = staged_archive(archive_name, archive_root)
     archive_root = archive.root
     keys = in_travel_order(archive, archive.trip_keys())
@@ -606,7 +670,7 @@ def list_command(
     done = uploaded_trips(archive)
     shown = 0
     for key in keys:
-        if pending and key in done:
+        if show == "pending" and key in done:
             continue
         shown += 1
         trip = staged_trip(archive, key)
@@ -618,6 +682,48 @@ def list_command(
         click.echo(f"  {mark}  {str(starts or ''):10}  {name[:48]:48} {key}")
 
     click.echo(f"\n{plural(shown, 'trip')}, {len(done)} already uploaded")
+
+
+####################################################################
+#
+def list_uploaded(
+    archive_name: str,
+    archive_root: Path | None,
+    username: str | None,
+    password: str | None,
+) -> None:
+    """
+    List the trips in the Tripsy account, oldest first.
+
+    When the staged archive exists, a trip an upload from it recorded is
+    shown with its archive key.  Without one, the trips are listed alone.
+    """
+    root = archive_for(archive_name, archive_root)
+    keys: dict[int, str] = {}
+    if root.is_dir():
+        keys = trip_keys_by_id(staged_archive(archive_name, archive_root))
+
+    with open_session(username, password, profile=INTERACTIVE) as client:
+        try:
+            trips = list(client.iter_trips(fields=["id", "name", "starts_at"]))
+        except TripsyError as exc:
+            raise click.ClickException(f"listing trips: {exc}") from exc
+
+    trips.sort(
+        key=lambda t: (t.get("starts_at") is None, t.get("starts_at") or "")
+    )
+    from_archive = 0
+    for trip in trips:
+        key = keys.get(int(trip.get("id") or 0), "")
+        from_archive += bool(key)
+        name = str(trip.get("name") or trip.get("id"))
+        starts = str(trip.get("starts_at") or "")[:10]
+        click.echo(f"      {starts:10}  {name[:48]:48} {key}".rstrip())
+
+    summary = f"\n{plural(len(trips), 'trip')} in Tripsy"
+    if keys:
+        summary += f", {from_archive} from this archive"
+    click.echo(summary)
 
 
 ####################################################################

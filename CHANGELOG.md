@@ -15,10 +15,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Support HashiCorp Vault as a secret store, with `hcvault://` URLs.
 - Ask for the Tripsy username and password at a terminal when no flag,
   environment variable or store supplies them.
+- `auth check`, which authenticates and says how the token was found.
+- `list --uploaded`, which lists the trips in your Tripsy account, with
+  or without a staged archive.
 
 ### Changed
 
 - Report each login, and whether the token was saved, on standard error.
+
+### Fixed
+
+- `verify` no longer reports a trip as wholly missing after it has been
+  saved again in the Tripsy app.
 
 ## [1.0.1] - 2026-09-24
 
