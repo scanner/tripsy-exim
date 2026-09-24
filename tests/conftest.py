@@ -118,7 +118,7 @@ def _seed_random_data(faker_seed: int) -> None:
 #
 @pytest.fixture(autouse=True)
 def _no_real_credentials(
-    mocker: MockerFixture, request: pytest.FixtureRequest
+    mocker: MockerFixture, request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
     """
     Keep the suite away from a real account and a real secret store.
@@ -134,12 +134,39 @@ def _no_real_credentials(
     into one.  A test wanting credentials sets them itself, and one that
     is *about* `.env` marks itself `uses_dotenv` -- it still gets a clean
     environment, and the file it reads is one it wrote in a tmp_path.
+
+    The same holds for Vault: no VAULT_ variable survives, and the token
+    file `vault login` writes is looked for in an empty tmp_path instead
+    of the developer's home.  Nothing is ever asked at a prompt either;
+    a test about prompting says so through the `prompting` fixture.
     """
     if not request.node.get_closest_marker("uses_dotenv"):
         mocker.patch("tripsy_exim.cli.load_dotenv", return_value=False)
     mocker.patch.dict(os.environ)
-    for name in [n for n in os.environ if n.startswith("TRIPSY_")]:
+    for name in [n for n in os.environ if n.startswith(("TRIPSY_", "VAULT_"))]:
         del os.environ[name]
+    mocker.patch(
+        "tripsy_exim.secrets.VAULT_TOKEN_FILE", tmp_path / ".vault-token"
+    )
+    mocker.patch("tripsy_exim.cli.can_prompt", return_value=False)
+
+
+####################################################################
+#
+@pytest.fixture
+def prompting(mocker: MockerFixture) -> Any:
+    """
+    Run as though at a terminal, so missing credentials are asked for.
+
+    Returns the prompt mock.  It answers 'typed-<label>' to each prompt,
+    so a test can tell a typed value from one found elsewhere, and a
+    test can read `call_args_list` for what was asked.
+    """
+    mocker.patch("tripsy_exim.cli.can_prompt", return_value=True)
+    return mocker.patch(
+        "tripsy_exim.cli.click.prompt",
+        side_effect=lambda text, **kwargs: f"typed-{text.split()[-1]}",
+    )
 
 
 ####################################################################

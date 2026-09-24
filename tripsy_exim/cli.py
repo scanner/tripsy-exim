@@ -6,14 +6,15 @@ Command line entry point for tripsy-exim.
 Subcommands are added by the import, export, and status work; this module
 owns only the command group and the options common to every subcommand.
 
-This is also the single place credentials are resolved.  Nothing else in
-the package reads the environment, runs `op`, or holds a password: the
-token from `POST /auth` is passed down to the API client and lives in
-memory for the run.
+This is also the single place credentials are resolved -- see
+`open_session` for the token and `resolve_credentials` for the username
+and password.  Nothing else in the package reads the environment or
+holds a password.
 """
 
 # system imports
 import os
+import sys
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -36,7 +37,11 @@ from tripsy_exim.api import (
     TokenAuth,
     TripsyClient,
 )
-from tripsy_exim.api.errors import TripsyError
+from tripsy_exim.api.errors import (
+    AuthenticationError,
+    BadRequest,
+    TripsyError,
+)
 from tripsy_exim.geocode import (
     Cache,
     far_from,
@@ -135,16 +140,25 @@ def main() -> None:
 
 ####################################################################
 #
+def can_prompt() -> bool:
+    """Whether someone is at a terminal to be asked."""
+    return sys.stdin.isatty()
+
+
+####################################################################
+#
 def resolve_credentials(
     username: str | None, password: str | None, store: SecretStore | None
 ) -> tuple[str, str]:
     """
-    Settle which credentials a run authenticates with.
+    Find the username and password to log in with.
 
-    First match wins: a command line flag, then the environment, then
-    `.env`, then the secret store.  The store is last because it is the
-    one that keeps a plaintext password out of the environment entirely,
-    so anything more explicit is a deliberate override of it.
+    Each is taken, separately, from the first place that has it:
+
+      1. the --username / --password flag
+      2. TRIPSY_USERNAME / TRIPSY_PASSWORD, from the environment or .env
+      3. the secret store named by TRIPSY_SECRET_URL
+      4. a prompt, when running at a terminal
 
     Args:
         username: Username given on the command line, or None.
@@ -152,26 +166,34 @@ def resolve_credentials(
         store: The configured secret store, or None.
 
     Returns:
-        The username and password to authenticate with.
+        The username and password.
 
     Raises:
-        click.ClickException: Nothing resolved to a usable pair.
+        click.ClickException: A value is still missing after all four.
     """
     username = username or os.environ.get("TRIPSY_USERNAME")
     password = password or os.environ.get("TRIPSY_PASSWORD")
+
+    if store is not None:
+        try:
+            username = username or store.get(USERNAME)
+            password = password or store.get(PASSWORD)
+        except SecretError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    if can_prompt():
+        username = username or click.prompt("Tripsy username", err=True)
+        password = password or click.prompt(
+            "Tripsy password", err=True, hide_input=True
+        )
+
     if username and password:
         return username, password
 
-    if store is not None:
-        username = username or store.get(USERNAME)
-        password = password or store.get(PASSWORD)
-        if username and password:
-            return username, password
-
     raise click.ClickException(
-        "no credentials: pass --username/--password, set TRIPSY_USERNAME "
-        f"and TRIPSY_PASSWORD, or point {SECRET_URL_ENV} at a record "
-        "holding them"
+        "no Tripsy username and password: pass --username/--password, set "
+        "TRIPSY_USERNAME and TRIPSY_PASSWORD, put them in the store named "
+        f"by {SECRET_URL_ENV}, or run at a terminal to be asked for them"
     )
 
 
@@ -184,13 +206,16 @@ def open_session(
     profile: PacingProfile = IMPORT,
 ) -> Iterator[TripsyClient]:
     """
-    Yield a client authenticated however this run can manage it.
+    Yield a client authenticated with a Tripsy API token.
 
-    A store that can write caches the token beside the password, so a run
-    that follows a successful one sends no credentials at all.  The token
-    has no stated lifetime -- these appear to be Django REST Framework
-    tokens, which are not documented to expire -- so the only way to learn a cached one is spent
-    is to be refused, and that refusal is what replaces it.
+    Where the token comes from:
+
+      1. If the store named by TRIPSY_SECRET_URL holds one, it is used.
+      2. Otherwise the run logs in with a username and password -- see
+         `resolve_credentials` -- and, when a store is configured, saves
+         the new token there.
+      3. If Tripsy refuses a stored token, the run logs in once more, as
+         in 2, and the new token replaces it.
 
     Args:
         username: Username given on the command line, or None.
@@ -198,8 +223,7 @@ def open_session(
         profile: Pacing profile for the run.
 
     Yields:
-        A client carrying a token, which re-authenticates once if that
-        token turns out to be spent.
+        A client carrying a token.
     """
     try:
         store = store_for()
@@ -208,32 +232,54 @@ def open_session(
 
     ####################################################################
     #
-    def fresh() -> str:
-        """Trade credentials for a token, caching it where possible."""
+    def log_in() -> str:
+        """Trade a username and password for a token, and save it."""
         name, secret = resolve_credentials(username, password, store)
-        with TripsyClient(profile=INTERACTIVE) as session:
-            token = session.login(name, secret)
-        if store is not None and store.writable:
-            try:
-                store.put(TOKEN, token)
-            except SecretError as exc:
-                # Not fatal: the run has a token and only the saving of a
-                # request next time is lost.
-                #
-                click.echo(f"could not cache the token: {exc}", err=True)
+        try:
+            with TripsyClient(profile=INTERACTIVE) as session:
+                token = session.login(name, secret)
+        except (BadRequest, AuthenticationError) as exc:
+            raise click.ClickException(
+                f"Tripsy refused the username and password for {name}"
+            ) from exc
+
+        if store is None:
+            click.echo(
+                f"logged in to Tripsy as {name}; the token is not saved "
+                f"because {SECRET_URL_ENV} is not set",
+                err=True,
+            )
+            return token
+
+        try:
+            store.put(TOKEN, token)
+        except SecretError as exc:
+            # Not fatal: this run has its token, and the next one will
+            # log in again.
+            #
+            click.echo(
+                f"logged in to Tripsy as {name}; could not save the token "
+                f"to {store.url}: {exc}",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"logged in to Tripsy as {name}; token saved to {store.url}",
+                err=True,
+            )
         return token
 
-    cached = None
+    stored = None
     if store is not None:
         try:
-            cached = store.get(TOKEN)
+            stored = store.get(TOKEN)
         except SecretError as exc:
             raise click.ClickException(str(exc)) from exc
 
     client = TripsyClient(
         profile=profile,
-        auth=TokenAuth(cached or fresh()),
-        reauthenticate=fresh,
+        auth=TokenAuth(stored or log_in()),
+        reauthenticate=log_in,
     )
     try:
         yield client

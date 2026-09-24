@@ -391,60 +391,78 @@ Exports accumulate and are managed by hand. Nothing prunes them.
 
 ## Credentials
 
-### What Tripsy needs
-
 Tripsy's `POST /auth` trades a **username and password** for an **API
 token**, which is then sent on every request as
-`Authorization: Token <token>`. That is the whole of the scheme; there is
-no separate API key to provision.
-
-The token has no stated lifetime -- these appear to be Django REST
-Framework tokens, which are not documented to expire -- so the only way to learn one is spent is to be
-refused, and a run that is told `401` re-authenticates once and carries
-on.
-
-A password is never written to disk by this project, and no credentials
-file is created. The token is a different matter: when a writable secret
-store is configured, the token is cached **into that store** so the next
-run sends no credentials at all. A cached token is exactly as powerful as
-the password that produced it, which is why it goes back into the store
-rather than into a file beside the archive. With no store configured,
-nothing is persisted at all and the token lives in memory for the run.
+`Authorization: Token <token>`. There is no separate API key to
+provision. The token has no stated lifetime -- these appear to be Django
+REST Framework tokens, which are not documented to expire -- so the only
+way to learn one is spent is to be refused.
 
 Commands that only read or write the archive -- `stage`, `stage-export`,
 `list`, `merge`, and `upload` without `--write` -- need no credentials.
 
-### Where the credentials come from
+A password is never written anywhere by this project. The token is
+written only to a secret store you name with `TRIPSY_SECRET_URL`.
 
-Resolution order, first match wins:
+### The rules
+
+**The token.**
+
+1. If the store named by `TRIPSY_SECRET_URL` holds a token, it is used.
+2. Otherwise the command logs in with a username and password, and, if a
+   store is named, saves the new token there.
+3. If Tripsy refuses a stored token, the command logs in once more, as
+   in 2, and the new token replaces it.
+
+**The username and password**, needed only for 2 and 3. Each is taken,
+separately, from the first place that has it:
 
 1. `--username` / `--password` on the command
 2. `TRIPSY_USERNAME` / `TRIPSY_PASSWORD` in the environment, or in `.env`
-3. A credential store named by `TRIPSY_SECRET_URL`
+3. the store named by `TRIPSY_SECRET_URL`
+4. a prompt, when the command is run at a terminal -- the password is
+   not echoed
 
-The store is last because it is the one form that keeps a plaintext
-password out of the environment entirely, so anything more explicit is a
-deliberate override of it.
+If one is still missing, the command stops and says where it looked.
+
+Every login is reported on standard error, with whether and where the
+token was saved.
+
+A stored token is used before anything else is looked at, so while it is
+good, `--username` has no effect. To log in as someone else, remove the
+`token` field from the store.
 
 `.env` is searched for from the working directory upwards, so running
-from anywhere inside a project finds that project's file. This is the
-same whichever way you launch the command.
+from anywhere inside a project finds that project's file.
 
-### Storing them on your behalf
+### Common setups
 
-Letting a credential store hold the username and password is optional.
-It is the form to prefer for scheduled or unattended runs, and it is the
-only one that also caches the token.
+**Everything in one store.** Keep `username` and `password` in the store
+and let the token be saved beside them. Nothing is ever asked, which
+suits scheduled runs.
+
+**The token in a store, the password somewhere else.** The store holds
+only the token. When a login is needed, you type the username and
+password at the prompt, or supply them for that run with the flags or
+the environment -- for example from another password manager -- and the
+new token is saved to the store. After that, runs need only the store.
+
+**No store.** The command logs in on every run and keeps the token in
+memory only. The username and password come from the flags, the
+environment, or the prompt.
+
+### Secret stores
 
 A store is named by a URL whose scheme picks the backend:
 
-| Scheme                            | Backend         | Status                    |
-|-----------------------------------|-----------------|---------------------------|
-| `op://<vault>/<item>`             | 1Password       | Supported                 |
-| `hcvault://<host>/<mount>/<path>` | HashiCorp Vault | Reserved, not implemented |
+| Scheme                            | Backend         |
+|-----------------------------------|-----------------|
+| `op://<vault>/<item>`             | 1Password       |
+| `hcvault://<host>/<mount>/<path>` | HashiCorp Vault |
 
-More backends may be added; the scheme is the seam a new one arrives at,
-so this table is the directory of what is understood today.
+Every store is read for the `username`, `password` and `token` fields,
+and written only for `token`. A store that has never held a token is the
+ordinary starting state, not an error.
 
 #### 1Password -- `op://<vault>/<item>`
 
@@ -454,29 +472,37 @@ does not talk to 1Password any other way. See
 [1Password's own documentation](https://developer.1password.com/docs/cli/)
 for getting it.
 
-With `op` in place:
-
 ```sh
 export TRIPSY_SECRET_URL="op://Personal/Tripsy"
 ```
 
-That is an *item* URL, naming the vault and the item and no field. Its
-`username` and `password` fields are read when a command needs to
-authenticate, and the token is written back to a `token` field on the
-same item as a concealed value. An item that has never carried a `token`
-field is the ordinary starting state, not an error.
+That is an *item* URL, naming the vault and the item and no field. The
+token is written to a `token` field on the item as a concealed value.
 
 Set `TRIPSY_OP_BIN` if `op` is not on the `PATH`, or if more than one is
 and the account you want is reachable only through a particular one.
 
 #### HashiCorp Vault -- `hcvault://<host>/<mount>/<path>`
 
-Named but not implemented: an `hcvault://` URL is refused with a message
-saying so. The grammar is reserved now so that a URL someone writes today
-still means the same thing when the backend exists -- the host falls back
-to `VAULT_ADDR` when the URL omits it, the first path segment is the
-secret engine's mount point, and the rest is the path under it. Always KV
-version 2.
+A secret in a KV version 2 secrets engine. The first path segment is the
+engine's mount point and the rest is the secret's path under it:
+
+```sh
+export TRIPSY_SECRET_URL="hcvault://vault.example.com:8200/secret/tripsy-exim"
+```
+
+Leave the host out -- `hcvault:///secret/tripsy-exim` -- to use
+`VAULT_ADDR`. A host in the URL is reached over https.
+
+Vault is authenticated to the way its own command line does it:
+`VAULT_TOKEN`, then the `~/.vault-token` file that `vault login` writes.
+`VAULT_CACERT` names a CA bundle for a server whose certificate is not
+publicly trusted.
+
+The token is written with a merge patch, so other fields on the secret
+are left alone. If the secret does not exist yet, the first write
+creates it. In Vault policy terms, reading uses `read`, the first write
+`create`, and every later write `patch`.
 
 ## Pacing
 
