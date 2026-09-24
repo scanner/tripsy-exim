@@ -71,6 +71,11 @@ FLIGHT_SUMMARIES: tuple[str, ...] = (
     "Connecting flight",
 )
 
+# Invented operators and airport codes for the flight block.
+#
+FLIGHT_OPERATORS: tuple[str, ...] = ("Aurora Air", "Meridian Airways")
+FLIGHT_AIRPORTS: tuple[str, ...] = ("ZQA", "ZQB", "ZQC", "ZQD")
+
 # Invented strings that exercise the non-ASCII path.
 #
 NON_ASCII_SAMPLES: tuple[str, ...] = (
@@ -105,6 +110,67 @@ def synthetic_uid(*, item: bool = True) -> str:
 
 ####################################################################
 #
+def flight_block(
+    *,
+    origin: str = "ZQA",
+    destination: str = "ZQB",
+    company: str = "Aurora Air",
+    number: str | None = "123",
+    departure_terminal: str = "",
+    departure_gate: str = "",
+    arrival_terminal: str = "",
+    arrival_gate: str = "",
+    split: bool = False,
+    layover: str | None = None,
+    date_line: bool = False,
+) -> str:
+    """
+    Render the DESCRIPTION block TripIt generates for a flight.
+
+    The layout is the real one; every value is invented.  TripIt's own
+    header and footer lines are left off, since they name TripIt and a
+    generated calendar must not.
+
+    Args:
+        origin: Departure airport code.
+        destination: Arrival airport code.
+        company: The operating airline's name.
+        number: The flight number, or None for an operator line that
+            carries none.
+        departure_terminal: As written; empty is how TripIt writes none.
+        departure_gate: As departure_terminal.
+        arrival_terminal: As departure_terminal.
+        arrival_gate: As departure_terminal.
+        split: Put terminal and gate on a line of their own beneath the
+            operator, as TripIt sometimes does.
+        layover: Connection time appended to the arrival line, if any.
+        date_line: Include the ruled date-line notice between the
+            departure and arrival halves.
+
+    Returns:
+        The block as DESCRIPTION text.
+    """
+    operator = f"{company} {number}" if number else f"{company} "
+    departure = f"Terminal {departure_terminal}, Gate {departure_gate}"
+    arrival = f"Terminal {arrival_terminal}, Gate {arrival_gate}"
+    if layover:
+        arrival = f"{arrival}, {layover} layover"
+
+    lines = ["", "10:00 AM", f"[Flight] {origin} to {destination}", " "]
+    if split:
+        lines += [operator, departure]
+    else:
+        lines.append(f"{operator}, {departure}")
+    lines += [" "]
+    if date_line:
+        rule = "-" * 39
+        lines += [rule, "  Crosses the International Date Line", rule]
+    lines += ["2:00 PM", f"Arrive Somewhere ({destination})", arrival, " "]
+    return "\n".join(lines)
+
+
+####################################################################
+#
 def build_event(
     faker: Faker,
     *,
@@ -115,6 +181,7 @@ def build_event(
     non_ascii: bool = False,
     landmark: tuple[str, float, float] | None = None,
     summary: str | None = None,
+    description: str | None = None,
 ) -> Event:
     """
     Build one VEVENT carrying the properties the real export carries.
@@ -131,6 +198,7 @@ def build_event(
             timezone.  Chosen from LANDMARKS when not given.
         summary: Fixed SUMMARY text, for exercising classification.
             Invented text is used when not given.
+        description: Fixed DESCRIPTION text, as `summary`.
 
     Returns:
         An icalendar Event.
@@ -144,17 +212,19 @@ def build_event(
     if non_ascii:
         drawn = faker.random_element(NON_ASCII_SAMPLES)
         location = faker.random_element(NON_ASCII_SAMPLES)
-        description = (
+        drawn_notes = (
             f"{faker.random_element(NON_ASCII_SAMPLES)} -- {faker.sentence()}"
         )
     else:
         drawn = faker.catch_phrase()
         location = faker.street_address()
-        description = faker.sentence()
+        drawn_notes = faker.sentence()
 
     event.add("summary", summary if summary is not None else drawn)
     event.add("location", location)
-    event.add("description", description)
+    event.add(
+        "description", description if description is not None else drawn_notes
+    )
 
     if with_geo:
         _, latitude, longitude = landmark or faker.random_element(LANDMARKS)
@@ -193,7 +263,8 @@ def build_calendar(
         floating: How many carry a naive, floating time.
         non_ascii: How many draw non-ASCII text.
         lodging: How many carry TripIt's check-in/check-out wording.
-        flights: How many carry TripIt's flight wording.
+        flights: How many carry TripIt's flight wording and the block it
+            generates for a flight.
         landmark: Fix the coordinates, to assert a derived timezone.
         start: First day of the trip.  Defaults to a fixed date.
         name: The trip's own name, as TripIt writes it inside
@@ -255,10 +326,19 @@ def build_calendar(
         # does not collide with the defect counts taken from the front.
         #
         summary: str | None = None
+        description: str | None = None
         if index >= items - lodging:
             summary = str(faker.random_element(LODGING_SUMMARIES))
         elif index >= items - lodging - flights:
             summary = str(faker.random_element(FLIGHT_SUMMARIES))
+            origin, destination = faker.random_sample(FLIGHT_AIRPORTS, 2)
+            description = flight_block(
+                origin=origin,
+                destination=destination,
+                company=str(faker.random_element(FLIGHT_OPERATORS)),
+                number=str(faker.random_int(1, 9999)),
+                departure_gate=str(faker.random_int(1, 99)),
+            )
 
         calendar.add_component(
             build_event(
@@ -269,6 +349,7 @@ def build_calendar(
                 non_ascii=index < non_ascii,
                 landmark=landmark,
                 summary=summary,
+                description=description,
             )
         )
     return calendar

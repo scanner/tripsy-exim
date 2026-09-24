@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tripsy-exim"
-version = "1.0.0"
+version = "1.0.1"
 description = "Export and import trip data for Tripsy.app"
 readme = "README.md"
 requires-python = ">=3.14"
