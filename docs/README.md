@@ -21,13 +21,14 @@ OPTIONS, EXAMPLES.
 |---|---|
 | [stage(1)](stage.md) | Parse `.ics` files into the archive |
 | [stage-export(1)](stage-export.md) | Parse a TripIt JSON export into the archive |
-| [list(1)](list.md) | List the staged trips and what has been uploaded |
+| [list(1)](list.md) | List the staged trips, or the trips in Tripsy |
 | [merge(1)](merge.md) | Upload one staged trip as part of another |
 | [upload(1)](upload.md) | Send staged trips to Tripsy |
 | [verify(1)](verify.md) | Read them back and compare against the plan |
 | [fix-locations(1)](fix-locations.md) | Geocode what Tripsy left without a position |
 | [backfill(1)](backfill.md) | Say what the staged trips still need a person for |
 | [export(1)](export.md) | Take a dated copy of what Tripsy holds |
+| [auth(1)](auth.md) | Check how this machine authenticates to Tripsy |
 | [models(7)](models.md) | The pydantic object model, and how it maps to Tripsy's |
 | [fake-api(7)](fake-api.md) | The in-memory Tripsy API the tests run against |
 | [archive(7)](archive.md) | The archive on disk, identifiers, overrides, the manifest |

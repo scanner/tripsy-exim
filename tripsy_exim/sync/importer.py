@@ -979,6 +979,32 @@ def _recall(archive: Archive, identifier: str) -> int | None:
 
 ####################################################################
 #
+def trip_keys_by_id(archive: Archive) -> dict[int, str]:
+    """
+    Which staged trip each uploaded Tripsy trip came from.
+
+    Matched through the ids an upload recorded rather than through the
+    `internal_identifier` Tripsy returns: a trip saved again in the app
+    can come back carrying a different one, while its id stays put.
+
+    Args:
+        archive: The archive to read.
+
+    Returns:
+        Tripsy trip ids to trip keys, for every trip an upload recorded.
+    """
+    cache = archive.read_manifest().get("identifier_cache") or {}
+    found: dict[int, str] = {}
+    for key in archive.trip_keys():
+        trip = staged_trip(archive, key)
+        trip_id = cache.get(str(getattr(trip, "internal_identifier", "") or ""))
+        if trip_id is not None:
+            found[int(trip_id)] = key
+    return found
+
+
+####################################################################
+#
 def _remember(archive: Archive, identifier: str, trip_id: int) -> None:
     """Record a trip's id in the manifest, so a later run need not ask."""
     manifest: dict[str, Any] = archive.read_manifest()
